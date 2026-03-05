@@ -1,0 +1,174 @@
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '10.0.x'
+
+jobs:
+  build:
+    name: Build, Test, Pack
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep -oPm1 "(?<=<Version>)[^<]+" Directory.Build.props)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Restore
+        run: dotnet restore CodexSharp.slnx
+
+      - name: Build
+        run: dotnet build CodexSharp.slnx -c Release -warnaserror --no-restore
+
+      - name: Test
+        run: dotnet test --solution CodexSharp.slnx -c Release --no-build
+
+      - name: Pack
+        run: |
+          mkdir -p artifacts
+          dotnet pack src/CodexSharp/CodexSharp.csproj \
+            -c Release \
+            --no-build \
+            -o artifacts
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: artifacts/*.*nupkg
+          retention-days: 5
+
+  publish:
+    name: Publish NuGet
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
+      version: ${{ needs.build.outputs.version }}
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: nuget-packages
+          path: artifacts
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Publish to NuGet
+        id: publish
+        continue-on-error: true
+        run: |
+          set +e
+          PUBLISHED=false
+
+          for package in artifacts/*.nupkg; do
+            if [[ "$package" == *.snupkg ]]; then
+              continue
+            fi
+
+            RESULT=$(dotnet nuget push "$package" \
+              --api-key "${{ secrets.NUGET_API_KEY }}" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate 2>&1)
+            EXIT_CODE=$?
+
+            echo "$RESULT"
+
+            if [ $EXIT_CODE -eq 0 ]; then
+              PUBLISHED=true
+            elif echo "$RESULT" | grep -qi "already exists"; then
+              echo "Package already exists, skipping"
+            else
+              echo "NuGet publish failed"
+              exit 1
+            fi
+          done
+
+          echo "published=$PUBLISHED" >> "$GITHUB_OUTPUT"
+
+  create-release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    if: needs.publish.outputs.published == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: nuget-packages
+          path: artifacts
+
+      - name: Create and push tag
+        run: |
+          VERSION="${{ needs.publish.outputs.version }}"
+          TAG="v$VERSION"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag already exists: $TAG"
+          else
+            git tag -a "$TAG" -m "Release $VERSION"
+            git push origin "$TAG"
+          fi
+
+      - name: Generate release notes
+        run: |
+          VERSION="${{ needs.publish.outputs.version }}"
+          {
+            echo "# ManagedCode.CodexSharp $VERSION"
+            echo
+            echo "Released on $(date +'%Y-%m-%d')"
+            echo
+            echo "## Packages"
+            for package in artifacts/*.nupkg; do
+              if [[ "$package" == *.snupkg ]]; then
+                continue
+              fi
+              name=$(basename "$package")
+              echo "- $name"
+            done
+          } > release_notes.md
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.publish.outputs.version }}
+          name: v${{ needs.publish.outputs.version }}
+          body_path: release_notes.md
+          files: artifacts/*.*nupkg
+          draft: false
+          prerelease: false

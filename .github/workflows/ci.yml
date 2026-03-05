@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+env:
+  DOTNET_VERSION: '10.0.x'
+
+jobs:
+  build-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore CodexSharp.slnx
+
+      - name: Build
+        run: dotnet build CodexSharp.slnx -c Release -warnaserror --no-restore
+
+      - name: Test
+        run: dotnet test --solution CodexSharp.slnx -c Release --no-build
+
+  aot-smoke:
+    name: NativeAOT Smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Publish AOT smoke app
+        run: |
+          dotnet publish samples/CodexSharp.AotSmoke/CodexSharp.AotSmoke.csproj \
+            -c Release \
+            -r linux-x64 \
+            -p:PublishAot=true \
+            --self-contained true

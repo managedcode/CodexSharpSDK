@@ -1,0 +1,216 @@
+name: TypeScript SDK Watch
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: typescript-sdk-watch
+  cancel-in-progress: false
+
+jobs:
+  detect-and-open-issue:
+    name: Detect TypeScript SDK Updates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Detect updates in openai/codex sdk/typescript
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SUBMODULE_PATH="submodules/openai-codex"
+          TARGET_PATH="sdk/typescript"
+
+          if [ ! -d "$SUBMODULE_PATH/.git" ] && [ ! -f "$SUBMODULE_PATH/.git" ]; then
+            echo "Submodule not initialized: $SUBMODULE_PATH"
+            echo "has_update=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          current_sha="$(git -C "$SUBMODULE_PATH" rev-parse HEAD)"
+          default_branch="$(git -C "$SUBMODULE_PATH" remote show origin | sed -n '/HEAD branch/s/.*: //p')"
+
+          if [ -z "$default_branch" ]; then
+            default_branch="main"
+          fi
+
+          git -C "$SUBMODULE_PATH" fetch origin "$default_branch" --depth=512
+          latest_sha="$(git -C "$SUBMODULE_PATH" rev-parse FETCH_HEAD)"
+
+          echo "current_sha=$current_sha" >> "$GITHUB_OUTPUT"
+          echo "latest_sha=$latest_sha" >> "$GITHUB_OUTPUT"
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+
+          if [ "$current_sha" = "$latest_sha" ]; then
+            echo "No upstream updates."
+            echo "has_update=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed_files="$(git -C "$SUBMODULE_PATH" diff --name-only "$current_sha" "$latest_sha" -- "$TARGET_PATH")"
+
+          if [ -z "$changed_files" ]; then
+            echo "Upstream changed, but not in $TARGET_PATH."
+            echo "has_update=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "has_update=true" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "changed_files<<EOF"
+            echo "$changed_files"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          commits="$(git -C "$SUBMODULE_PATH" log --no-merges --date=short --pretty=format:'- %h %s (%ad)' "$current_sha..$latest_sha" -- "$TARGET_PATH" | head -n 80)"
+
+          if [ -z "$commits" ]; then
+            commits="- No commit messages found for $TARGET_PATH (file-level diff exists)."
+          fi
+
+          {
+            echo "commits<<EOF"
+            echo "$commits"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create issue for TypeScript SDK update
+        if: steps.detect.outputs.has_update == 'true'
+        uses: actions/github-script@v7
+        env:
+          CURRENT_SHA: ${{ steps.detect.outputs.current_sha }}
+          LATEST_SHA: ${{ steps.detect.outputs.latest_sha }}
+          DEFAULT_BRANCH: ${{ steps.detect.outputs.default_branch }}
+          CHANGED_FILES: ${{ steps.detect.outputs.changed_files }}
+          COMMITS: ${{ steps.detect.outputs.commits }}
+          ASSIGNEE: ${{ vars.SDK_SYNC_ASSIGNEE != '' && vars.SDK_SYNC_ASSIGNEE || 'codex' }}
+        with:
+          script: |
+            const currentSha = process.env.CURRENT_SHA;
+            const latestSha = process.env.LATEST_SHA;
+            const defaultBranch = process.env.DEFAULT_BRANCH;
+            const changedFilesRaw = process.env.CHANGED_FILES || '';
+            const commitsRaw = process.env.COMMITS || '';
+            const assignee = process.env.ASSIGNEE || 'codex';
+
+            const shortCurrent = currentSha.slice(0, 7);
+            const shortLatest = latestSha.slice(0, 7);
+            const marker = `<!-- codexsharp-typescript-sdk-update:${latestSha} -->`;
+            const labelName = 'typescript-sdk-sync';
+
+            const changedFiles = changedFilesRaw
+              .split('\n')
+              .map(x => x.trim())
+              .filter(Boolean)
+              .slice(0, 200)
+              .map(x => `- \`${x}\``)
+              .join('\n');
+
+            const commits = commitsRaw.trim() || '- No commit summary available.';
+
+            // Ensure label exists (ignore if it already exists or cannot be created).
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: labelName,
+                color: '0e8a16',
+                description: 'Tracks upstream TypeScript SDK updates from openai/codex',
+              });
+            } catch (error) {
+              core.info(`Label create skipped: ${error.message}`);
+            }
+
+            // Avoid duplicate issue for the same upstream SHA.
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: labelName,
+              per_page: 100,
+            });
+
+            const duplicate = openIssues.find(issue =>
+              !issue.pull_request && issue.body && issue.body.includes(marker)
+            );
+
+            if (duplicate) {
+              core.info(`Issue already exists for ${latestSha}: #${duplicate.number}`);
+              return;
+            }
+
+            const title = `Sync TypeScript SDK from openai/codex (${shortCurrent} -> ${shortLatest})`;
+            const compareUrl = `https://github.com/openai/codex/compare/${currentSha}...${latestSha}`;
+            const submoduleCommitUrl = `https://github.com/openai/codex/commit/${latestSha}`;
+
+            const body = [
+              marker,
+              '',
+              'Detected upstream updates in `openai/codex/sdk/typescript`.',
+              '',
+              `- Submodule path: \`submodules/openai-codex\``,
+              `- Watched branch: \`${defaultBranch}\``,
+              `- Current pinned commit: \`${currentSha}\``,
+              `- Latest upstream commit: \`${latestSha}\``,
+              `- Compare: ${compareUrl}`,
+              `- Latest commit: ${submoduleCommitUrl}`,
+              '',
+              '## Changed files (`sdk/typescript`)',
+              changedFiles || '- (No file list available)',
+              '',
+              '## Commits touching `sdk/typescript`',
+              commits,
+              '',
+              '## Action required',
+              '- [ ] Review upstream TypeScript SDK changes',
+              '- [ ] Update the C# SDK in this repository to keep parity',
+              '- [ ] Add/adjust tests for new behavior',
+              '- [ ] Update docs/changelog if public API changed',
+              '',
+              `_Opened automatically by scheduled workflow \'TypeScript SDK Watch\'._',
+            ].join('\n');
+
+            let issue;
+            try {
+              issue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: [labelName],
+                assignees: [assignee],
+              });
+              core.info(`Created and assigned issue #${issue.data.number} to @${assignee}`);
+            } catch (error) {
+              core.warning(`Issue assignment failed (${error.message}), creating without assignee.`);
+              issue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: [labelName],
+              });
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.data.number,
+                body: `Could not auto-assign @${assignee}. Please assign manually.`,
+              });
+            }
+
+            core.info(`Issue URL: ${issue.data.html_url}`);

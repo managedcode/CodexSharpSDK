@@ -1,0 +1,32 @@
+<available_skills>
+  <skill>
+    <name>mcaf-adr-writing</name>
+    <description>Create or update an ADR (Architecture Decision Record) under `docs/ADR/` using `docs/templates/ADR-Template.md`: context, decision, alternatives, consequences, rollout, and verification. Use when changing architecture, boundaries, dependencies, data model, or cross-cutting patterns; ensure it is self-contained, has a Mermaid diagram, and defines testable invariants.</description>
+    <location>/Users/ksemenenko/Developer/CodexSharp/.codex/skills/mcaf-adr-writing/SKILL.md</location>
+  </skill>
+  <skill>
+    <name>mcaf-architecture-overview</name>
+    <description>Create or update `docs/Architecture/Overview.md` (architecture diagrams): maintain Mermaid diagrams for system/modules, interfaces/contracts, and key classes/types; document dependency rules; link to ADRs/features. Use when onboarding, refactoring, or adding modules/boundaries.</description>
+    <location>/Users/ksemenenko/Developer/CodexSharp/.codex/skills/mcaf-architecture-overview/SKILL.md</location>
+  </skill>
+  <skill>
+    <name>mcaf-feature-spec</name>
+    <description>Create or update a feature spec under `docs/Features/` using `docs/templates/Feature-Template.md`: business rules, user flows, system behaviour, Mermaid diagram(s), verification plan, and Definition of Done. Use before implementing a non-trivial feature or when behaviour changes; keep the spec executable (test flows + traceability to tests).</description>
+    <location>/Users/ksemenenko/Developer/CodexSharp/.codex/skills/mcaf-feature-spec/SKILL.md</location>
+  </skill>
+  <skill>
+    <name>mcaf-formatting</name>
+    <description>Format code and keep style consistent using the repository’s canonical formatting/lint commands from `AGENTS.md`. Use after implementing changes or when formatting drift causes noisy diffs; keep formatting changes intentional and verified with build/tests.</description>
+    <location>/Users/ksemenenko/Developer/CodexSharp/.codex/skills/mcaf-formatting/SKILL.md</location>
+  </skill>
+  <skill>
+    <name>mcaf-skill-curation</name>
+    <description>Create, update, and validate repository skills under your agent’s skills directory (Codex: `.codex/skills/`, Claude: `.claude/skills/`) so they match the real codebase and `AGENTS.md` rules; tune YAML `description` triggers, apply feedback, and generate `&lt;available_skills&gt;` metadata blocks.</description>
+    <location>/Users/ksemenenko/Developer/CodexSharp/.codex/skills/mcaf-skill-curation/SKILL.md</location>
+  </skill>
+  <skill>
+    <name>mcaf-testing</name>
+    <description>Add or update automated tests for a change (bugfix, feature, refactor) using the repository’s testing rules in `AGENTS.md`. Use TDD where applicable; derive scenarios from docs/Features/* and ADR invariants; prefer stable integration/API/UI tests, run build before tests, and verify meaningful assertions for happy/negative/edge cases.</description>
+    <location>/Users/ksemenenko/Developer/CodexSharp/.codex/skills/mcaf-testing/SKILL.md</location>
+  </skill>
+</available_skills>
