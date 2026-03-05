@@ -251,6 +251,7 @@ public class CodexClientTests
     }
 
     [Test]
+    [Property("RequiresCodexAuth", "true")]
     public async Task ResumeThread_WithThreadOptions_RunsWithRealCodexCli()
     {
         var settings = RealCodexTestSupport.GetRequiredSettings();

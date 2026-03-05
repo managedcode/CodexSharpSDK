@@ -4,6 +4,7 @@ using ManagedCode.CodexSharpSDK.Tests.Shared;
 
 namespace ManagedCode.CodexSharpSDK.Tests.Integration;
 
+[Property("RequiresCodexAuth", "true")]
 public class RealCodexIntegrationTests
 {
     [Test]

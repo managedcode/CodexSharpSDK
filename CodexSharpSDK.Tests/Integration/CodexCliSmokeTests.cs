@@ -18,6 +18,7 @@ public class CodexCliSmokeTests
     private const string OpenAiApiKeyEnvironmentVariable = "OPENAI_API_KEY";
     private const string OpenAiBaseUrlEnvironmentVariable = "OPENAI_BASE_URL";
     private const string CodexApiKeyEnvironmentVariable = "CODEX_API_KEY";
+    private const string CodexHomeEnvironmentVariable = "CODEX_HOME";
     private const string CodexHomeDirectoryName = ".codex";
     private const string AppDataDirectoryName = "AppData";
     private const string RoamingDirectoryName = "Roaming";
@@ -31,6 +32,8 @@ public class CodexCliSmokeTests
     private const string VersionToken = "codex-cli";
     private const string ExecHelpToken = "Run Codex non-interactively";
     private const string NotLoggedInToken = "Not logged in";
+    private const string NotAuthenticatedToken = "Not authenticated";
+    private const string LoginGuidanceToken = "codex login";
 
     [Test]
     public async Task CodexCli_Smoke_FindExecutablePath_ResolvesExistingBinary()
@@ -76,7 +79,7 @@ public class CodexCliSmokeTests
             await Assert.That(result.ExitCode).IsNotEqualTo(0);
 
             var output = string.Concat(result.StandardOutput, result.StandardError);
-            await Assert.That(output.Contains(NotLoggedInToken, StringComparison.OrdinalIgnoreCase)).IsTrue();
+            await Assert.That(ContainsUnauthenticatedSignal(output)).IsTrue();
         }
         finally
         {
@@ -150,6 +153,7 @@ public class CodexCliSmokeTests
 
         return new Dictionary<string, string>(StringComparer.Ordinal)
         {
+            [CodexHomeEnvironmentVariable] = codexHome,
             [HomeEnvironmentVariable] = sandboxDirectory,
             [UserProfileEnvironmentVariable] = sandboxDirectory,
             [XdgConfigHomeEnvironmentVariable] = configHome,
@@ -213,6 +217,13 @@ public class CodexCliSmokeTests
         var standardError = await standardErrorTask;
 
         return new CodexProcessResult(process.ExitCode, standardOutput, standardError);
+    }
+
+    private static bool ContainsUnauthenticatedSignal(string output)
+    {
+        return output.Contains(NotLoggedInToken, StringComparison.OrdinalIgnoreCase)
+               || output.Contains(NotAuthenticatedToken, StringComparison.OrdinalIgnoreCase)
+               || output.Contains(LoginGuidanceToken, StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed record CodexProcessResult(

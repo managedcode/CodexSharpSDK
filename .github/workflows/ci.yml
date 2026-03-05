@@ -45,7 +45,7 @@ jobs:
         run: dotnet build ManagedCode.CodexSharpSDK.slnx -c Release -warnaserror --no-restore
 
       - name: Test (full solution)
-        run: dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release --no-build
+        run: dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release --no-build -- --treenode-filter "/*/*/*/*[RequiresCodexAuth!=true]"
 
       - name: Smoke tests (Codex CLI discover + invoke)
         run: dotnet test --project CodexSharpSDK.Tests/CodexSharpSDK.Tests.csproj -c Release --no-build -- --treenode-filter "/*/*/*/CodexCli_Smoke_*"

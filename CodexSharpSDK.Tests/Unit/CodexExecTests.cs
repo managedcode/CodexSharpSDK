@@ -253,6 +253,7 @@ public class CodexExecTests
     }
 
     [Test]
+    [Property("RequiresCodexAuth", "true")]
     public async Task RunAsync_WithNullLogger_CompletesSuccessfully_WithRealCodexCli()
     {
         var settings = RealCodexTestSupport.GetRequiredSettings();

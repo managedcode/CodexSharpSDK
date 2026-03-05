@@ -115,6 +115,7 @@ If no new rule is detected -> do not update the file.
 - Testing framework is TUnit (`tests`).
 - TUnit/MTP does not support `--filter`; for focused runs use `dotnet test ... -- --treenode-filter "<pattern>"`.
 - Always invoke runner options after `--` (for example `dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release -- --treenode-filter "<pattern>"`); if a focused filter runs zero tests, treat it as an invalid filter and correct it before reporting results.
+- Before changing TUnit test-selection logic (tree node filters, properties, UIDs), read official TUnit docs first and validate syntax with a local no-auth run before updating CI/release workflows.
 - In this repository, method-level `treenode-filter` patterns resolve at depth 3 (`/*/*/*/<TestMethodName>`). For integration subset runs use `dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release -- --treenode-filter "/*/*/*/RunAsync_*_EndToEnd"` (matches current `CodexExecIntegrationTests`).
 - For reliable discovery when selecting focused tests, use the built test app directly: `tests/bin/Release/net10.0/ManagedCode.CodexSharpSDK.Tests --list-tests` (the `dotnet test ... -- --list-tests` wrapper can report zero tests in this setup).
 - Every behavior change must include or update tests.
@@ -124,6 +125,7 @@ If no new rule is detected -> do not update the file.
 - Treat `codex` CLI as a test prerequisite: ensure local/CI test setup installs `codex` before running CLI interaction tests; do not replace this with fakes.
 - CI must validate SDK on all Codex-supported desktop/server platforms (macOS, Linux, Windows): run build + tests and include a non-auth smoke check that `codex` is discoverable and invokable.
 - CI/release workflow smoke checks are additive gates; they must not replace full `dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release` execution.
+- CI/release full-solution runs must exclude auth-required tests using `-- --treenode-filter "/*/*/*/*[RequiresCodexAuth!=true]"` so pipelines remain non-auth and deterministic.
 - Cross-platform non-auth smoke must run `codex` from local installation in CI and verify unauthenticated behavior explicitly (for example `codex login status` in isolated profile returns "Not logged in"), proving binary discovery + process launch on each platform.
 - Real Codex integration tests must rely on existing local Codex CLI login/session only; do not read or require `OPENAI_API_KEY` in test setup.
 - Do not use nullable `TryGetSettings()` + early `return` skip patterns in real integration tests; resolve required settings directly and fail fast with actionable errors when missing.

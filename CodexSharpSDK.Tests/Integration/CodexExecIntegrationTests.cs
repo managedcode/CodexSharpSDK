@@ -4,6 +4,7 @@ using ManagedCode.CodexSharpSDK.Tests.Shared;
 
 namespace ManagedCode.CodexSharpSDK.Tests.Integration;
 
+[Property("RequiresCodexAuth", "true")]
 public class CodexExecIntegrationTests
 {
     private const string FirstPrompt = "Reply with short plain text: first.";
