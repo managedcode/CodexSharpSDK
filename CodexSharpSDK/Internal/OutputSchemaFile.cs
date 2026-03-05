@@ -8,6 +8,8 @@ namespace ManagedCode.CodexSharpSDK.Internal;
 
 internal sealed class OutputSchemaFile : IAsyncDisposable
 {
+    private static readonly UTF8Encoding Utf8WithoutBom = new(encoderShouldEmitUTF8Identifier: false);
+
     private readonly string? _schemaDirectory;
     private readonly ILogger _logger;
 
@@ -36,7 +38,7 @@ internal sealed class OutputSchemaFile : IAsyncDisposable
         var schemaPath = Path.Combine(schemaDirectory, "schema.json");
         try
         {
-            await File.WriteAllTextAsync(schemaPath, schema.ToJsonObject().ToJsonString(), Encoding.UTF8, cancellationToken)
+            await File.WriteAllTextAsync(schemaPath, schema.ToJsonObject().ToJsonString(), Utf8WithoutBom, cancellationToken)
                 .ConfigureAwait(false);
             return new OutputSchemaFile(schemaPath, schemaDirectory, logger);
         }

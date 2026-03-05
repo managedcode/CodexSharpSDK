@@ -231,19 +231,16 @@ public class CodexClientTests
     [Test]
     public async Task ResumeThread_WithThreadOptions_RunsWithRealCodexCli()
     {
-        var settings = RealCodexTestSupport.TryGetSettings();
-        if (settings is null)
-        {
-            return;
-        }
+        var settings = RealCodexTestSupport.GetRequiredSettings();
 
-        using var client = RealCodexTestSupport.CreateClient(settings);
+        using var client = RealCodexTestSupport.CreateClient();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(3));
 
         var startedThread = client.StartThread(new ThreadOptions
         {
             Model = settings.Model,
-            ModelReasoningEffort = ModelReasoningEffort.Minimal,
+            ModelReasoningEffort = ModelReasoningEffort.Medium,
+            WebSearchMode = WebSearchMode.Disabled,
             SandboxMode = SandboxMode.WorkspaceWrite,
             NetworkAccessEnabled = true,
         });
@@ -259,7 +256,8 @@ public class CodexClientTests
         var resumedThread = client.ResumeThread(threadId!, new ThreadOptions
         {
             Model = settings.Model,
-            ModelReasoningEffort = ModelReasoningEffort.Minimal,
+            ModelReasoningEffort = ModelReasoningEffort.Medium,
+            WebSearchMode = WebSearchMode.Disabled,
             SandboxMode = SandboxMode.WorkspaceWrite,
             NetworkAccessEnabled = true,
         });

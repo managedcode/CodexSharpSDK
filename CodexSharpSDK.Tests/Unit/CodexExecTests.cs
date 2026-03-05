@@ -195,11 +195,7 @@ public class CodexExecTests
     [Test]
     public async Task RunAsync_WithNullLogger_CompletesSuccessfully_WithRealCodexCli()
     {
-        var settings = RealCodexTestSupport.TryGetSettings();
-        if (settings is null)
-        {
-            return;
-        }
+        var settings = RealCodexTestSupport.GetRequiredSettings();
 
         var exec = new CodexExec(logger: NullLogger.Instance);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
@@ -208,10 +204,10 @@ public class CodexExecTests
         {
             Input = "Reply with short plain text: ok.",
             Model = settings.Model,
-            ModelReasoningEffort = ModelReasoningEffort.Minimal,
+            ModelReasoningEffort = ModelReasoningEffort.Medium,
+            WebSearchMode = WebSearchMode.Disabled,
             SandboxMode = SandboxMode.WorkspaceWrite,
             NetworkAccessEnabled = true,
-            ApiKey = settings.ApiKey,
             CancellationToken = cancellation.Token,
         }));
 

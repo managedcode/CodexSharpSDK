@@ -13,8 +13,8 @@ Verify `ManagedCode.CodexSharpSDK` behavior against TypeScript SDK semantics wit
 
 - Test observable behavior, not implementation details.
 - Use the real installed `codex` CLI for process interaction tests; do not use `FakeCodexProcessRunner` doubles.
-- Treat `codex` as a prerequisite for real integration runs (`CODEX_REAL_INTEGRATION=1`) and install it in CI/local setup before running those tests.
-- Real integration runs should work with existing Codex CLI login/session; `OPENAI_API_KEY` is optional.
+- Treat `codex` as a prerequisite for real integration runs and install it in CI/local setup before running those tests.
+- Real integration runs must use existing Codex CLI login/session; test harness does not use API key environment variables.
 - Real integration model selection must be explicit: set `CODEX_TEST_MODEL` or define `model` in `~/.codex/config.toml` (no hardcoded fallback model).
 - Cover error paths and cancellation paths.
 - Keep protocol parser coverage for all supported event/item kinds.
@@ -36,7 +36,7 @@ TUnit on Microsoft Testing Platform does not support `--filter`; run focused tes
 - CodexThread run/stream/failure behavior: [CodexThreadTests.cs](../../CodexSharpSDK.Tests/Unit/CodexThreadTests.cs)
 - CLI arg/env/config behavior: [CodexExecTests.cs](../../CodexSharpSDK.Tests/Unit/CodexExecTests.cs)
 - Real process integration behavior: [CodexExecIntegrationTests.cs](../../CodexSharpSDK.Tests/Integration/CodexExecIntegrationTests.cs)
-- Real Codex CLI integration behavior (env-gated): [RealCodexIntegrationTests.cs](../../CodexSharpSDK.Tests/Integration/RealCodexIntegrationTests.cs)
+- Real Codex CLI integration behavior (local login required): [RealCodexIntegrationTests.cs](../../CodexSharpSDK.Tests/Integration/RealCodexIntegrationTests.cs)
 - Protocol parser behavior: [ThreadEventParserTests.cs](../../CodexSharpSDK.Tests/Unit/ThreadEventParserTests.cs)
 - Protocol parser large-stream performance profile: [ThreadEventParserPerformanceTests.cs](../../CodexSharpSDK.Tests/Performance/ThreadEventParserPerformanceTests.cs)
 - Serialization and schema temp file behavior: [TomlConfigSerializerTests.cs](../../CodexSharpSDK.Tests/Unit/TomlConfigSerializerTests.cs), [OutputSchemaFileTests.cs](../../CodexSharpSDK.Tests/Unit/OutputSchemaFileTests.cs)

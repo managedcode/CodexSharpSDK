@@ -82,7 +82,7 @@ public sealed class CodexExec
 
         await using (enumerator)
         {
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
                 string line;
                 try
@@ -316,7 +316,7 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
 
             var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
 
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
                 var line = await process.StandardOutput.ReadLineAsync(cancellationToken).ConfigureAwait(false);
                 if (line is null)

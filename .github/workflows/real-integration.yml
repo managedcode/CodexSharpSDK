@@ -15,7 +15,6 @@ env:
 jobs:
   codex-real-integration:
     name: Real Codex Integration (${{ matrix.os }})
-    if: ${{ secrets.OPENAI_API_KEY != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +46,4 @@ jobs:
       - name: Run real integration tests
         run: dotnet test --project CodexSharpSDK.Tests/CodexSharpSDK.Tests.csproj -c Release -- --treenode-filter "/*/*/*/RunAsync_WithRealCodexCli_*"
         env:
-          CODEX_REAL_INTEGRATION: "1"
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CODEX_TEST_MODEL: gpt-5.3-codex

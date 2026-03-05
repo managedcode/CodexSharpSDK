@@ -13,11 +13,7 @@ public class CodexExecIntegrationTests
     [Test]
     public async Task RunAsync_UsesDefaultProcessRunner_EndToEnd()
     {
-        var settings = RealCodexTestSupport.TryGetSettings();
-        if (settings is null)
-        {
-            return;
-        }
+        var settings = RealCodexTestSupport.GetRequiredSettings();
 
         var exec = new CodexExec();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
@@ -26,10 +22,10 @@ public class CodexExecIntegrationTests
         {
             Input = FirstPrompt,
             Model = settings.Model,
-            ModelReasoningEffort = ModelReasoningEffort.Minimal,
+            ModelReasoningEffort = ModelReasoningEffort.Medium,
+            WebSearchMode = WebSearchMode.Disabled,
             SandboxMode = SandboxMode.WorkspaceWrite,
             NetworkAccessEnabled = true,
-            ApiKey = settings.ApiKey,
             CancellationToken = cancellation.Token,
         }));
 
@@ -40,19 +36,16 @@ public class CodexExecIntegrationTests
     [Test]
     public async Task RunAsync_SecondCallPassesResumeArgument_EndToEnd()
     {
-        var settings = RealCodexTestSupport.TryGetSettings();
-        if (settings is null)
-        {
-            return;
-        }
+        var settings = RealCodexTestSupport.GetRequiredSettings();
 
-        using var client = RealCodexTestSupport.CreateClient(settings);
+        using var client = RealCodexTestSupport.CreateClient();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(3));
 
         var thread = client.StartThread(new ThreadOptions
         {
             Model = settings.Model,
-            ModelReasoningEffort = ModelReasoningEffort.Minimal,
+            ModelReasoningEffort = ModelReasoningEffort.Medium,
+            WebSearchMode = WebSearchMode.Disabled,
             SandboxMode = SandboxMode.WorkspaceWrite,
             NetworkAccessEnabled = true,
         });
@@ -76,11 +69,7 @@ public class CodexExecIntegrationTests
     [Test]
     public async Task RunAsync_PropagatesNonZeroExitCode_EndToEnd()
     {
-        var settings = RealCodexTestSupport.TryGetSettings();
-        if (settings is null)
-        {
-            return;
-        }
+        var settings = RealCodexTestSupport.GetRequiredSettings();
 
         var exec = new CodexExec();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
@@ -89,9 +78,9 @@ public class CodexExecIntegrationTests
         {
             Input = FirstPrompt,
             Model = InvalidModel,
+            WebSearchMode = WebSearchMode.Disabled,
             SandboxMode = SandboxMode.WorkspaceWrite,
             NetworkAccessEnabled = true,
-            ApiKey = settings.ApiKey,
             CancellationToken = cancellation.Token,
         }));
 

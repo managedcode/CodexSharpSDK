@@ -11,13 +11,9 @@ public class CodexThreadTests
     [Test]
     public async Task RunAsync_WithRealCodexCli_ReturnsCompletedTurnAndUpdatesThreadId()
     {
-        var settings = RealCodexTestSupport.TryGetSettings();
-        if (settings is null)
-        {
-            return;
-        }
+        var settings = RealCodexTestSupport.GetRequiredSettings();
 
-        using var client = RealCodexTestSupport.CreateClient(settings);
+        using var client = RealCodexTestSupport.CreateClient();
         var thread = StartRealIntegrationThread(client, settings.Model);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
 
@@ -33,13 +29,9 @@ public class CodexThreadTests
     [Test]
     public async Task RunAsync_WithStructuredInput_ReturnsTypedJson()
     {
-        var settings = RealCodexTestSupport.TryGetSettings();
-        if (settings is null)
-        {
-            return;
-        }
+        var settings = RealCodexTestSupport.GetRequiredSettings();
 
-        using var client = RealCodexTestSupport.CreateClient(settings);
+        using var client = RealCodexTestSupport.CreateClient();
         var thread = StartRealIntegrationThread(client, settings.Model);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
 
@@ -63,13 +55,9 @@ public class CodexThreadTests
     [Test]
     public async Task RunAsync_SecondTurnKeepsThreadId_WithRealCodexCli()
     {
-        var settings = RealCodexTestSupport.TryGetSettings();
-        if (settings is null)
-        {
-            return;
-        }
+        var settings = RealCodexTestSupport.GetRequiredSettings();
 
-        using var client = RealCodexTestSupport.CreateClient(settings);
+        using var client = RealCodexTestSupport.CreateClient();
         var thread = StartRealIntegrationThread(client, settings.Model);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(3));
 
@@ -92,13 +80,9 @@ public class CodexThreadTests
     [Test]
     public async Task RunStreamedAsync_YieldsCompletedTurnEvent_WithRealCodexCli()
     {
-        var settings = RealCodexTestSupport.TryGetSettings();
-        if (settings is null)
-        {
-            return;
-        }
+        var settings = RealCodexTestSupport.GetRequiredSettings();
 
-        using var client = RealCodexTestSupport.CreateClient(settings);
+        using var client = RealCodexTestSupport.CreateClient();
         var thread = StartRealIntegrationThread(client, settings.Model);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
 
@@ -170,7 +154,8 @@ public class CodexThreadTests
         return client.StartThread(new ThreadOptions
         {
             Model = model,
-            ModelReasoningEffort = ModelReasoningEffort.Minimal,
+            ModelReasoningEffort = ModelReasoningEffort.Medium,
+            WebSearchMode = WebSearchMode.Disabled,
             SandboxMode = SandboxMode.WorkspaceWrite,
             NetworkAccessEnabled = true,
         });

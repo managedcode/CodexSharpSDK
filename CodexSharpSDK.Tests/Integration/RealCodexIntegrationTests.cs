@@ -9,13 +9,9 @@ public class RealCodexIntegrationTests
     [Test]
     public async Task RunAsync_WithRealCodexCli_ReturnsStructuredOutput()
     {
-        var settings = RealCodexTestSupport.TryGetSettings();
-        if (settings is null)
-        {
-            return;
-        }
+        var settings = RealCodexTestSupport.GetRequiredSettings();
 
-        using var client = RealCodexTestSupport.CreateClient(settings);
+        using var client = RealCodexTestSupport.CreateClient();
         var thread = StartRealIntegrationThread(client, settings.Model);
 
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
@@ -37,13 +33,9 @@ public class RealCodexIntegrationTests
     [Test]
     public async Task RunStreamedAsync_WithRealCodexCli_YieldsCompletedTurnEvent()
     {
-        var settings = RealCodexTestSupport.TryGetSettings();
-        if (settings is null)
-        {
-            return;
-        }
+        var settings = RealCodexTestSupport.GetRequiredSettings();
 
-        using var client = RealCodexTestSupport.CreateClient(settings);
+        using var client = RealCodexTestSupport.CreateClient();
         var thread = StartRealIntegrationThread(client, settings.Model);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
 
@@ -71,13 +63,9 @@ public class RealCodexIntegrationTests
     [Test]
     public async Task RunAsync_WithRealCodexCli_SecondTurnKeepsThreadId()
     {
-        var settings = RealCodexTestSupport.TryGetSettings();
-        if (settings is null)
-        {
-            return;
-        }
+        var settings = RealCodexTestSupport.GetRequiredSettings();
 
-        using var client = RealCodexTestSupport.CreateClient(settings);
+        using var client = RealCodexTestSupport.CreateClient();
         var thread = StartRealIntegrationThread(client, settings.Model);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(3));
 
@@ -114,7 +102,8 @@ public class RealCodexIntegrationTests
         return client.StartThread(new ThreadOptions
         {
             Model = model,
-            ModelReasoningEffort = ModelReasoningEffort.Minimal,
+            ModelReasoningEffort = ModelReasoningEffort.Medium,
+            WebSearchMode = WebSearchMode.Disabled,
             SandboxMode = SandboxMode.WorkspaceWrite,
             NetworkAccessEnabled = true,
         });

@@ -70,6 +70,7 @@ If no new rule is detected -> do not update the file.
 - analyze: `dotnet build ManagedCode.CodexSharpSDK.slnx -c Release -warnaserror /p:TreatWarningsAsErrors=true`
 - coverage: `dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release -- --coverage --coverage-output-format cobertura --coverage-output coverage.cobertura.xml`
 - aot-smoke: `dotnet publish tests/AotSmoke/ManagedCode.CodexSharpSDK.AotSmoke.csproj -c Release -r osx-arm64 /p:PublishAot=true`
+- For Codex CLI metadata checks (for example model list/default), always use the installed `codex` CLI directly first; do not use `cargo`/submodule helper binaries unless explicitly requested.
 
 ### Task Delivery (ALL TASKS)
 
@@ -120,7 +121,8 @@ If no new rule is detected -> do not update the file.
 - Integration test sandboxes must be created under the repository `tests` tree (for example `tests/.sandbox/*`) for deterministic, inspectable paths; do not use `Path.GetTempPath()` for test sandbox directories.
 - For CLI process interaction tests, use the real installed `codex` CLI (no `FakeCodexProcessRunner` test doubles).
 - Treat `codex` CLI as a test prerequisite: ensure local/CI test setup installs `codex` before running CLI interaction tests; do not replace this with fakes.
-- Real Codex integration tests must work with existing Codex CLI login/session by default; `OPENAI_API_KEY` is optional and must not be a hard requirement.
+- Real Codex integration tests must rely on existing local Codex CLI login/session only; do not read or require `OPENAI_API_KEY` in test setup.
+- Do not use nullable `TryGetSettings()` + early `return` skip patterns in real integration tests; resolve required settings directly and fail fast with actionable errors when missing.
 - Do not bypass integration tests on Windows with unconditional early returns; keep tests cross-platform for supported Codex CLI environments.
 - Parser changes require tests in `ThreadEventParserTests` for supported and invalid payloads.
 - Parser performance tests must use representative mixed payloads across supported event/item types and assert parsed output shape; avoid single-payload stopwatch loops that do not validate branch coverage.
@@ -147,6 +149,9 @@ If no new rule is detected -> do not update the file.
 - Never use empty/silent `catch` blocks; every caught exception must be either logged with context or rethrown with context.
 - Never add fake fallback calls/mocks in production paths; unsupported runtime cases must fail explicitly with actionable errors.
 - No magic literals: extract constants/enums/config values.
+- In SDK production code, do not inline string literals in implementation logic; promote them to named constants (paths, env vars, command names, switch/comparison tokens) for reviewability and consistency.
+- Do not inline filesystem/path segment string literals in implementation logic; define named constants and reuse them.
+- Never override or silently mutate explicit user-provided Codex CLI settings (for example `web_search=disabled`); pass through user intent exactly.
 - Protocol and CLI string tokens are mandatory constants: never inline literals in parsing, mapping, or switch branches.
 - In SDK model records, never inline protocol type literals in constructors (`ThreadItem(..., "...")`, `ThreadEvent("...")`); always reference protocol constants.
 - Do not expose a public SDK type named `Thread`; use `CodexThread` to avoid .NET type-name conflicts.
@@ -156,6 +161,7 @@ If no new rule is detected -> do not update the file.
 - Never hardcode guessed Codex/OpenAI model names in tests, docs, or defaults; verify supported models and active default via Codex CLI first.
 - Before setting or changing any `Model` value, read available models and current default from the local `codex` CLI in the same environment/account and only then update code/tests/docs.
 - Model identifiers in code/tests must come from centralized constants or a shared resolver helper; do not inline model string literals repeatedly.
+- Keep C# SDK request options in parity with upstream Codex TypeScript SDK/CLI capabilities and verify against upstream source before changing option surface.
 - Image input API must support passing local image data as file path, `FileInfo`, and `Stream`.
 - Use `Microsoft.Extensions.Logging.ILogger` for SDK logging extension points; do not introduce custom logger interfaces or custom log-level enums.
 - In tests, prefer `Microsoft.Extensions.Logging.Abstractions.NullLogger` instead of custom fake logger implementations when log capture is not required.

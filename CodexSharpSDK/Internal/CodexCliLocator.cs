@@ -4,14 +4,40 @@ namespace ManagedCode.CodexSharpSDK.Internal;
 
 internal static class CodexCliLocator
 {
+    private const string PathEnvironmentVariable = "PATH";
+    private const string CmdScriptExtension = ".cmd";
+    private const string BatScriptExtension = ".bat";
+    private const string NpmScopePrefix = "@openai/";
+    private const string NodeModulesDirectory = "node_modules";
+    private const string OpenAiScopeDirectory = "@openai";
+    private const string VendorDirectory = "vendor";
+    private const string TargetCodexDirectory = "codex";
+    private const string NestedCodexPackageDirectory = "codex";
+
+    private const string TargetLinuxX64 = "x86_64-unknown-linux-musl";
+    private const string TargetLinuxArm64 = "aarch64-unknown-linux-musl";
+    private const string TargetDarwinX64 = "x86_64-apple-darwin";
+    private const string TargetDarwinArm64 = "aarch64-apple-darwin";
+    private const string TargetWindowsX64 = "x86_64-pc-windows-msvc";
+    private const string TargetWindowsArm64 = "aarch64-pc-windows-msvc";
+
+    private const string PackageCodexLinuxX64 = "@openai/codex-linux-x64";
+    private const string PackageCodexLinuxArm64 = "@openai/codex-linux-arm64";
+    private const string PackageCodexDarwinX64 = "@openai/codex-darwin-x64";
+    private const string PackageCodexDarwinArm64 = "@openai/codex-darwin-arm64";
+    private const string PackageCodexWindowsX64 = "@openai/codex-win32-x64";
+    private const string PackageCodexWindowsArm64 = "@openai/codex-win32-arm64";
+
     internal const string CodexExecutableName = "codex";
     internal const string CodexWindowsExecutableName = "codex.exe";
+    internal const string CodexWindowsCommandName = CodexExecutableName + CmdScriptExtension;
+    internal const string CodexWindowsBatchName = CodexExecutableName + BatScriptExtension;
 
     private static readonly string[] WindowsPathExecutableCandidates =
     [
         CodexWindowsExecutableName,
-        $"{CodexExecutableName}.cmd",
-        $"{CodexExecutableName}.bat",
+        CodexWindowsCommandName,
+        CodexWindowsBatchName,
         CodexExecutableName,
     ];
 
@@ -23,12 +49,12 @@ internal static class CodexCliLocator
     private static readonly Dictionary<string, string> PlatformPackageByTarget =
         new(StringComparer.Ordinal)
         {
-            ["x86_64-unknown-linux-musl"] = "@openai/codex-linux-x64",
-            ["aarch64-unknown-linux-musl"] = "@openai/codex-linux-arm64",
-            ["x86_64-apple-darwin"] = "@openai/codex-darwin-x64",
-            ["aarch64-apple-darwin"] = "@openai/codex-darwin-arm64",
-            ["x86_64-pc-windows-msvc"] = "@openai/codex-win32-x64",
-            ["aarch64-pc-windows-msvc"] = "@openai/codex-win32-arm64",
+            [TargetLinuxX64] = PackageCodexLinuxX64,
+            [TargetLinuxArm64] = PackageCodexLinuxArm64,
+            [TargetDarwinX64] = PackageCodexDarwinX64,
+            [TargetDarwinArm64] = PackageCodexDarwinArm64,
+            [TargetWindowsX64] = PackageCodexWindowsX64,
+            [TargetWindowsArm64] = PackageCodexWindowsArm64,
         };
 
     public static string FindCodexPath(string? codexPathOverride)
@@ -43,7 +69,7 @@ internal static class CodexCliLocator
             return resolvedPath;
         }
 
-        if (TryResolvePathExecutable(Environment.GetEnvironmentVariable("PATH"), OperatingSystem.IsWindows(), out var pathExecutable))
+        if (TryResolvePathExecutable(Environment.GetEnvironmentVariable(PathEnvironmentVariable), OperatingSystem.IsWindows(), out var pathExecutable))
         {
             return pathExecutable;
         }
@@ -101,25 +127,24 @@ internal static class CodexCliLocator
             return false;
         }
 
-        const string scopePrefix = "@openai/";
-        if (!packageName.StartsWith(scopePrefix, StringComparison.Ordinal))
+        if (!packageName.StartsWith(NpmScopePrefix, StringComparison.Ordinal))
         {
             return false;
         }
 
-        var packageDirectory = packageName[scopePrefix.Length..];
-        var executableName = OperatingSystem.IsWindows() ? "codex.exe" : "codex";
+        var packageDirectory = packageName[NpmScopePrefix.Length..];
+        var executableName = OperatingSystem.IsWindows() ? CodexWindowsExecutableName : CodexExecutableName;
 
         foreach (var root in EnumerateSearchRoots())
         {
             var primaryPath = Path.Combine(
                 root,
-                "node_modules",
-                "@openai",
+                NodeModulesDirectory,
+                OpenAiScopeDirectory,
                 packageDirectory,
-                "vendor",
+                VendorDirectory,
                 targetTriple,
-                "codex",
+                TargetCodexDirectory,
                 executableName);
 
             if (File.Exists(primaryPath))
@@ -130,15 +155,15 @@ internal static class CodexCliLocator
 
             var nestedPath = Path.Combine(
                 root,
-                "node_modules",
-                "@openai",
-                "codex",
-                "node_modules",
-                "@openai",
+                NodeModulesDirectory,
+                OpenAiScopeDirectory,
+                NestedCodexPackageDirectory,
+                NodeModulesDirectory,
+                OpenAiScopeDirectory,
                 packageDirectory,
-                "vendor",
+                VendorDirectory,
                 targetTriple,
-                "codex",
+                TargetCodexDirectory,
                 executableName);
 
             if (File.Exists(nestedPath))
@@ -209,8 +234,8 @@ internal static class CodexCliLocator
         {
             return RuntimeInformation.ProcessArchitecture switch
             {
-                Architecture.X64 => "x86_64-unknown-linux-musl",
-                Architecture.Arm64 => "aarch64-unknown-linux-musl",
+                Architecture.X64 => TargetLinuxX64,
+                Architecture.Arm64 => TargetLinuxArm64,
                 _ => null,
             };
         }
@@ -219,8 +244,8 @@ internal static class CodexCliLocator
         {
             return RuntimeInformation.ProcessArchitecture switch
             {
-                Architecture.X64 => "x86_64-apple-darwin",
-                Architecture.Arm64 => "aarch64-apple-darwin",
+                Architecture.X64 => TargetDarwinX64,
+                Architecture.Arm64 => TargetDarwinArm64,
                 _ => null,
             };
         }
@@ -229,8 +254,8 @@ internal static class CodexCliLocator
         {
             return RuntimeInformation.ProcessArchitecture switch
             {
-                Architecture.X64 => "x86_64-pc-windows-msvc",
-                Architecture.Arm64 => "aarch64-pc-windows-msvc",
+                Architecture.X64 => TargetWindowsX64,
+                Architecture.Arm64 => TargetWindowsArm64,
                 _ => null,
             };
         }
