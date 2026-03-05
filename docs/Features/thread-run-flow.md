@@ -33,6 +33,9 @@ Provide deterministic thread-based execution over Codex CLI so C# consumers can 
 
 - Only one active turn per `CodexThread` instance.
 - `RunAsync` returns only completed items and latest assistant text as `FinalResponse`.
+- `RunAsync<TResponse>` returns `RunResult<TResponse>` with deserialized `TypedResponse`; typed runs require an output schema via either direct `outputSchema` overload parameter or `TurnOptions.OutputSchema`.
+- Typed run API supports both concise overloads (`RunAsync<TResponse>(..., outputSchema, ...)`) and full options overloads (`RunAsync<TResponse>(..., turnOptions)`); for AOT-safe typed deserialization pass `JsonTypeInfo<TResponse>`.
+- Convenience typed overloads without `JsonTypeInfo<TResponse>` are explicitly marked as AOT-unsafe with `RequiresDynamicCode` and `RequiresUnreferencedCode`.
 - `turn.failed` must raise `ThreadRunException`.
 - Invalid JSONL event lines must fail fast with parse context.
 - Protocol tokens are parsed via constants, not inline literals.
@@ -41,6 +44,8 @@ Provide deterministic thread-based execution over Codex CLI so C# consumers can 
 - Structured output uses typed `StructuredOutputSchema` models (including DTO property selectors) that are serialized to CLI JSON schema files.
 - `LocalImageInput` accepts image path, `FileInfo`, or `Stream`; stream inputs are materialized to temp files and cleaned after run.
 - Codex executable resolution is deterministic: prefer npm-vendored native binary, then PATH lookup; on Windows PATH lookup checks `codex.exe`, `codex.cmd`, `codex.bat`, then `codex`.
+- Thread options map full Codex CLI flags (`profile`, `enable/disable`, OSS provider, ephemeral/color/progress/output options), plus raw `AdditionalCliArguments` passthrough for forward-compatible flags.
+- If thread web search options are not set, SDK does not emit `web_search` overrides and keeps effective CLI/config setting unchanged.
 - Cleanup failures are never silently swallowed; process/schema/image cleanup issues are logged through `ILogger`.
 
 ---
@@ -55,7 +60,13 @@ Provide deterministic thread-based execution over Codex CLI so C# consumers can 
 - Steps: build CLI args -> execute Codex CLI -> parse stream -> collect result
 - Result: `RunResult` with items, usage, final assistant response
 
-2. Resume existing thread
+2. Start and run typed structured turn
+- Actor: SDK consumer
+- Trigger: `StartThread().RunAsync<TResponse>(..., outputSchema, ...)` (or `TurnOptions` variant)
+- Steps: run regular turn -> deserialize final JSON response to `TResponse` using provided `JsonTypeInfo<TResponse>` when needed
+- Result: `RunResult<TResponse>` with typed payload in `TypedResponse`
+
+3. Resume existing thread
 - Actor: SDK consumer
 - Trigger: `ResumeThread(id).RunAsync(...)`
 - Steps: include `resume <id>` args before image flags -> parse events
@@ -75,7 +86,7 @@ Provide deterministic thread-based execution over Codex CLI so C# consumers can 
 flowchart LR
   Caller["Caller"] --> CodexThread["CodexThread.RunAsync / RunStreamedAsync"]
   CodexThread --> ExecArgs["CodexExecArgs"]
-  ExecArgs --> Cli["codex exec --experimental-json"]
+  ExecArgs --> Cli["codex exec --json"]
   Cli --> Stream["JSONL events"]
   Stream --> Parser["ThreadEventParser"]
   Parser --> Result["RunResult / streamed events"]
@@ -103,7 +114,7 @@ flowchart LR
 
 ## Definition of Done
 
-- Public thread APIs keep TypeScript parity documented in [PORTING_TODO.md](../../PORTING_TODO.md).
+- Public thread APIs stay aligned with current Codex CLI contracts and documented in repository feature/architecture docs.
 - All listed tests pass.
 - AOT publish smoke remains green.
 - Docs remain aligned with code and CI workflows.

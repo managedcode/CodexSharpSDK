@@ -49,7 +49,7 @@ public class CodexExecTests
         var commandArgs = exec.BuildCommandArgs(args);
 
         await Assert.That(commandArgs[0]).IsEqualTo("exec");
-        await Assert.That(commandArgs[1]).IsEqualTo("--experimental-json");
+        await Assert.That(commandArgs[1]).IsEqualTo("--json");
         await Assert.That(ContainsPair(commandArgs, "--model", CodexModels.Gpt53Codex)).IsTrue();
         await Assert.That(ContainsPair(commandArgs, "--sandbox", "workspace-write")).IsTrue();
         await Assert.That(ContainsPair(commandArgs, "--cd", "/tmp/project")).IsTrue();
@@ -109,6 +109,66 @@ public class CodexExecTests
 
         var configValues = CollectConfigValues(commandArgs, "web_search");
         await Assert.That(configValues).IsEquivalentTo(["web_search=\"live\""]);
+    }
+
+    [Test]
+    public async Task BuildCommandArgs_MapsExtendedCliFlags()
+    {
+        var exec = new CodexExec("codex", null, null);
+
+        var commandArgs = exec.BuildCommandArgs(new CodexExecArgs
+        {
+            Input = "test",
+            Profile = "strict",
+            UseOss = true,
+            LocalProvider = OssProvider.LmStudio,
+            FullAuto = true,
+            DangerouslyBypassApprovalsAndSandbox = true,
+            Ephemeral = true,
+            Color = ExecOutputColor.Never,
+            ProgressCursor = true,
+            OutputLastMessageFile = "/tmp/last-message.txt",
+            EnabledFeatures = ["multi_agent", "unified_exec"],
+            DisabledFeatures = ["steer"],
+            AdditionalCliArguments = ["--some-future-flag", "custom-value"],
+        });
+
+        await Assert.That(ContainsPair(commandArgs, "--profile", "strict")).IsTrue();
+        await Assert.That(ContainsPair(commandArgs, "--local-provider", "lmstudio")).IsTrue();
+        await Assert.That(ContainsPair(commandArgs, "--color", "never")).IsTrue();
+        await Assert.That(ContainsPair(commandArgs, "--output-last-message", "/tmp/last-message.txt")).IsTrue();
+
+        await Assert.That(commandArgs.Contains("--oss")).IsTrue();
+        await Assert.That(commandArgs.Contains("--full-auto")).IsTrue();
+        await Assert.That(commandArgs.Contains("--dangerously-bypass-approvals-and-sandbox")).IsTrue();
+        await Assert.That(commandArgs.Contains("--ephemeral")).IsTrue();
+        await Assert.That(commandArgs.Contains("--progress-cursor")).IsTrue();
+
+        await Assert.That(CollectFlagValues(commandArgs, "--enable")).IsEquivalentTo(["multi_agent", "unified_exec"]);
+        await Assert.That(CollectFlagValues(commandArgs, "--disable")).IsEquivalentTo(["steer"]);
+
+        await Assert.That(commandArgs.Contains("--some-future-flag")).IsTrue();
+        await Assert.That(commandArgs.Contains("custom-value")).IsTrue();
+    }
+
+    [Test]
+    public async Task BuildCommandArgs_KeepsConfiguredWebSearchWhenThreadOverridesMissing()
+    {
+        var exec = new CodexExec(
+            executablePath: "codex",
+            environmentOverride: null,
+            configOverrides: new JsonObject
+            {
+                ["web_search"] = "disabled",
+            });
+
+        var commandArgs = exec.BuildCommandArgs(new CodexExecArgs
+        {
+            Input = "test",
+        });
+
+        var configValues = CollectConfigValues(commandArgs, "web_search");
+        await Assert.That(configValues).IsEquivalentTo(["web_search=\"disabled\""]);
     }
 
     [Test]

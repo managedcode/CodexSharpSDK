@@ -27,11 +27,13 @@ flowchart LR
   EXEC["Execution Layer\nCodexExec + process runner"]
   PARSER["Protocol Parsing\nThreadEventParser + Events/Items"]
   IO["Config & Schema IO\nTomlConfigSerializer + OutputSchemaFile"]
+  META["CLI Metadata\nCodexCliMetadataReader"]
   TESTS["TUnit Tests"]
-  CI["GitHub Actions\nCI / Release / SDK Watch"]
+  CI["GitHub Actions\nCI / Release / CLI Watch"]
 
   API --> EXEC
   EXEC --> IO
+  API --> META
   EXEC --> PARSER
   PARSER --> API
   TESTS --> API
@@ -43,9 +45,9 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  THREAD["CodexThread.RunAsync / RunStreamedAsync"]
+  THREAD["CodexThread.RunAsync / RunAsync<T> / RunStreamedAsync"]
   EXECARGS["CodexExecArgs"]
-  CLI["Codex CLI\n`exec --experimental-json`"]
+  CLI["Codex CLI\n`exec --json`"]
   JSONL["JSONL stream events"]
   PARSE["ThreadEventParser.Parse"]
   EVENTS["ThreadEvent / ThreadItem models"]
@@ -83,8 +85,9 @@ flowchart LR
 - `Execution Layer` — code: [CodexExec.cs](../../CodexSharpSDK/Execution/CodexExec.cs), [CodexExecArgs.cs](../../CodexSharpSDK/Execution/CodexExecArgs.cs)
 - `Protocol Parsing` — code: [ThreadEventParser.cs](../../CodexSharpSDK/Internal/ThreadEventParser.cs), [CodexProtocolConstants.cs](../../CodexSharpSDK/Internal/CodexProtocolConstants.cs), [Events.cs](../../CodexSharpSDK/Models/Events.cs), [Items.cs](../../CodexSharpSDK/Models/Items.cs)
 - `Config & Schema IO` — code: [TomlConfigSerializer.cs](../../CodexSharpSDK/Internal/TomlConfigSerializer.cs), [OutputSchemaFile.cs](../../CodexSharpSDK/Internal/OutputSchemaFile.cs), [CodexOptions.cs](../../CodexSharpSDK/Configuration/CodexOptions.cs)
+- `CLI Metadata` — code: [CodexCliMetadataReader.cs](../../CodexSharpSDK/Internal/CodexCliMetadataReader.cs), [CodexCliMetadata.cs](../../CodexSharpSDK/Models/CodexCliMetadata.cs); docs: [cli-metadata.md](../Features/cli-metadata.md)
 - `Testing` — code: [CodexSharpSDK.Tests](../../CodexSharpSDK.Tests); docs: [strategy.md](../Testing/strategy.md)
-- `Automation` — workflows: [.github/workflows](../../.github/workflows) (including `real-integration.yml`); docs: [release-and-sync-automation.md](../Features/release-and-sync-automation.md)
+- `Automation` — workflows: [.github/workflows](../../.github/workflows) (including `real-integration.yml` and `codex-cli-watch.yml`); docs: [release-and-sync-automation.md](../Features/release-and-sync-automation.md)
 
 ### 2.2 Interfaces / contracts
 
@@ -98,6 +101,7 @@ flowchart LR
 - `CodexExec` — [CodexExec.cs](../../CodexSharpSDK/Execution/CodexExec.cs)
 - `ThreadEventParser` — [ThreadEventParser.cs](../../CodexSharpSDK/Internal/ThreadEventParser.cs)
 - `CodexProtocolConstants` — [CodexProtocolConstants.cs](../../CodexSharpSDK/Internal/CodexProtocolConstants.cs)
+- `CodexCliMetadataReader` — [CodexCliMetadataReader.cs](../../CodexSharpSDK/Internal/CodexCliMetadataReader.cs)
 
 ## 3) Dependency rules
 

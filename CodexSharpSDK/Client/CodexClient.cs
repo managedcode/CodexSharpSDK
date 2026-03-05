@@ -1,5 +1,7 @@
 using ManagedCode.CodexSharpSDK.Configuration;
 using ManagedCode.CodexSharpSDK.Execution;
+using ManagedCode.CodexSharpSDK.Internal;
+using ManagedCode.CodexSharpSDK.Models;
 
 namespace ManagedCode.CodexSharpSDK.Client;
 
@@ -55,6 +57,18 @@ public sealed class CodexClient : IDisposable
 
         var exec = GetOrCreateExec();
         return new CodexThread(exec, _options, options ?? new ThreadOptions(), id);
+    }
+
+    public CodexCliMetadata GetCliMetadata()
+    {
+        var executablePath = CodexCliLocator.FindCodexPath(_options.CodexExecutablePath);
+        return CodexCliMetadataReader.Read(executablePath);
+    }
+
+    public CodexCliUpdateStatus GetCliUpdateStatus()
+    {
+        var executablePath = CodexCliLocator.FindCodexPath(_options.CodexExecutablePath);
+        return CodexCliMetadataReader.ReadUpdateStatus(executablePath);
     }
 
     public void Dispose() => _connectionState.Dispose();

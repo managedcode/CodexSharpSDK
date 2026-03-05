@@ -5,8 +5,8 @@
 
 ## Context
 
-The TypeScript source SDK for Codex is CLI-oriented and communicates via `codex exec --experimental-json` with JSONL events.
-To keep behavior parity and reduce protocol drift, this .NET SDK needs a transport strategy aligned with upstream behavior.
+Codex is CLI-oriented and communicates via `codex exec --json` with JSONL events.
+To keep behavior parity and reduce protocol drift, this .NET SDK needs a transport strategy aligned with real CLI behavior.
 
 ## Decision
 
@@ -21,7 +21,7 @@ Use the local Codex CLI process as the only runtime transport layer for `Managed
 ```mermaid
 flowchart LR
   SDK["ManagedCode.CodexSharpSDK"] --> Exec["CodexExec"]
-  Exec --> Cli["codex exec --experimental-json"]
+  Exec --> Cli["codex exec --json"]
   Cli --> Jsonl["stdout JSONL"]
   Jsonl --> Parser["ThreadEventParser"]
   Parser --> Models["ThreadEvent / ThreadItem"]
@@ -31,7 +31,7 @@ flowchart LR
 
 ### Positive
 
-- High parity with upstream TypeScript behavior.
+- High parity with upstream CLI behavior.
 - No separate protocol server to maintain.
 - Easy compatibility when Codex CLI adds flags/events.
 

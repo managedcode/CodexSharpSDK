@@ -11,8 +11,43 @@ namespace ManagedCode.CodexSharpSDK.Execution;
 
 public sealed class CodexExec
 {
+    private const string ExecCommandName = "exec";
+    private const string ResumeCommandName = "resume";
+
+    private const string JsonFlag = "--json";
+    private const string ConfigFlag = "--config";
+    private const string EnableFeatureFlag = "--enable";
+    private const string DisableFeatureFlag = "--disable";
+    private const string ModelFlag = "--model";
+    private const string SandboxFlag = "--sandbox";
+    private const string WorkingDirectoryFlag = "--cd";
+    private const string AddDirectoryFlag = "--add-dir";
+    private const string ProfileFlag = "--profile";
+    private const string SkipGitRepoCheckFlag = "--skip-git-repo-check";
+    private const string OutputSchemaFlag = "--output-schema";
+    private const string UseOssFlag = "--oss";
+    private const string LocalProviderFlag = "--local-provider";
+    private const string FullAutoFlag = "--full-auto";
+    private const string DangerouslyBypassApprovalsAndSandboxFlag = "--dangerously-bypass-approvals-and-sandbox";
+    private const string EphemeralFlag = "--ephemeral";
+    private const string ColorFlag = "--color";
+    private const string ProgressCursorFlag = "--progress-cursor";
+    private const string OutputLastMessageFlag = "--output-last-message";
+    private const string ImageFlag = "--image";
+
+    private const string ModelReasoningEffortConfigKey = "model_reasoning_effort";
+    private const string SandboxNetworkAccessConfigKey = "sandbox_workspace_write.network_access";
+    private const string WebSearchConfigKey = "web_search";
+    private const string ApprovalPolicyConfigKey = "approval_policy";
+    private const string WebSearchLiveValue = "live";
+    private const string WebSearchDisabledValue = "disabled";
+    private const string BooleanTrueLiteral = "true";
+    private const string BooleanFalseLiteral = "false";
+
     private const string InternalOriginatorEnv = "CODEX_INTERNAL_ORIGINATOR_OVERRIDE";
     private const string CSharpSdkOriginator = "codex_sdk_csharp";
+    private const string OpenAiBaseUrlEnv = "OPENAI_BASE_URL";
+    private const string CodexApiKeyEnv = "CODEX_API_KEY";
 
     private readonly string _executablePath;
     private readonly IReadOnlyDictionary<string, string>? _environmentOverride;
@@ -115,32 +150,52 @@ public sealed class CodexExec
 
     internal IReadOnlyList<string> BuildCommandArgs(CodexExecArgs args)
     {
-        var commandArgs = new List<string> { "exec", "--experimental-json" };
+        var commandArgs = new List<string> { ExecCommandName, JsonFlag };
 
         if (_configOverrides is not null)
         {
             foreach (var overrideValue in TomlConfigSerializer.Serialize(_configOverrides))
             {
-                commandArgs.Add("--config");
+                commandArgs.Add(ConfigFlag);
                 commandArgs.Add(overrideValue);
             }
         }
 
+        AddRepeatedFlag(commandArgs, EnableFeatureFlag, args.EnabledFeatures);
+        AddRepeatedFlag(commandArgs, DisableFeatureFlag, args.DisabledFeatures);
+
+        if (args.UseOss)
+        {
+            commandArgs.Add(UseOssFlag);
+        }
+
+        if (args.LocalProvider.HasValue)
+        {
+            commandArgs.Add(LocalProviderFlag);
+            commandArgs.Add(args.LocalProvider.Value.ToCliValue());
+        }
+
+        if (!string.IsNullOrWhiteSpace(args.Profile))
+        {
+            commandArgs.Add(ProfileFlag);
+            commandArgs.Add(args.Profile);
+        }
+
         if (!string.IsNullOrWhiteSpace(args.Model))
         {
-            commandArgs.Add("--model");
+            commandArgs.Add(ModelFlag);
             commandArgs.Add(args.Model);
         }
 
         if (args.SandboxMode.HasValue)
         {
-            commandArgs.Add("--sandbox");
+            commandArgs.Add(SandboxFlag);
             commandArgs.Add(args.SandboxMode.Value.ToCliValue());
         }
 
         if (!string.IsNullOrWhiteSpace(args.WorkingDirectory))
         {
-            commandArgs.Add("--cd");
+            commandArgs.Add(WorkingDirectoryFlag);
             commandArgs.Add(args.WorkingDirectory);
         }
 
@@ -148,56 +203,101 @@ public sealed class CodexExec
         {
             foreach (var directory in args.AdditionalDirectories)
             {
-                commandArgs.Add("--add-dir");
+                commandArgs.Add(AddDirectoryFlag);
                 commandArgs.Add(directory);
             }
         }
 
+        if (args.FullAuto)
+        {
+            commandArgs.Add(FullAutoFlag);
+        }
+
+        if (args.DangerouslyBypassApprovalsAndSandbox)
+        {
+            commandArgs.Add(DangerouslyBypassApprovalsAndSandboxFlag);
+        }
+
+        if (args.Ephemeral)
+        {
+            commandArgs.Add(EphemeralFlag);
+        }
+
+        if (args.Color.HasValue)
+        {
+            commandArgs.Add(ColorFlag);
+            commandArgs.Add(args.Color.Value.ToCliValue());
+        }
+
+        if (args.ProgressCursor)
+        {
+            commandArgs.Add(ProgressCursorFlag);
+        }
+
+        if (!string.IsNullOrWhiteSpace(args.OutputLastMessageFile))
+        {
+            commandArgs.Add(OutputLastMessageFlag);
+            commandArgs.Add(args.OutputLastMessageFile);
+        }
+
         if (args.SkipGitRepoCheck)
         {
-            commandArgs.Add("--skip-git-repo-check");
+            commandArgs.Add(SkipGitRepoCheckFlag);
         }
 
         if (!string.IsNullOrWhiteSpace(args.OutputSchemaFile))
         {
-            commandArgs.Add("--output-schema");
+            commandArgs.Add(OutputSchemaFlag);
             commandArgs.Add(args.OutputSchemaFile);
         }
 
         if (args.ModelReasoningEffort.HasValue)
         {
-            commandArgs.Add("--config");
-            commandArgs.Add($"model_reasoning_effort=\"{args.ModelReasoningEffort.Value.ToCliValue()}\"");
+            commandArgs.Add(ConfigFlag);
+            commandArgs.Add(BuildQuotedConfig(ModelReasoningEffortConfigKey, args.ModelReasoningEffort.Value.ToCliValue()));
         }
 
         if (args.NetworkAccessEnabled.HasValue)
         {
-            commandArgs.Add("--config");
-            commandArgs.Add($"sandbox_workspace_write.network_access={args.NetworkAccessEnabled.Value.ToString().ToLowerInvariant()}");
+            commandArgs.Add(ConfigFlag);
+            commandArgs.Add(BuildBooleanConfig(SandboxNetworkAccessConfigKey, args.NetworkAccessEnabled.Value));
         }
 
         if (args.WebSearchMode.HasValue)
         {
-            commandArgs.Add("--config");
-            commandArgs.Add($"web_search=\"{args.WebSearchMode.Value.ToCliValue()}\"");
+            commandArgs.Add(ConfigFlag);
+            commandArgs.Add(BuildQuotedConfig(WebSearchConfigKey, args.WebSearchMode.Value.ToCliValue()));
         }
         else if (args.WebSearchEnabled.HasValue)
         {
-            commandArgs.Add("--config");
-            commandArgs.Add(args.WebSearchEnabled.Value
-                ? "web_search=\"live\""
-                : "web_search=\"disabled\"");
+            commandArgs.Add(ConfigFlag);
+            commandArgs.Add(BuildQuotedConfig(
+                WebSearchConfigKey,
+                args.WebSearchEnabled.Value ? WebSearchLiveValue : WebSearchDisabledValue));
         }
 
         if (args.ApprovalPolicy.HasValue)
         {
-            commandArgs.Add("--config");
-            commandArgs.Add($"approval_policy=\"{args.ApprovalPolicy.Value.ToCliValue()}\"");
+            commandArgs.Add(ConfigFlag);
+            commandArgs.Add(BuildQuotedConfig(ApprovalPolicyConfigKey, args.ApprovalPolicy.Value.ToCliValue()));
+        }
+
+        if (args.AdditionalCliArguments is not null)
+        {
+            foreach (var argument in args.AdditionalCliArguments)
+            {
+                if (string.IsNullOrWhiteSpace(argument))
+                {
+                    continue;
+                }
+
+                commandArgs.Add(argument);
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(args.ThreadId))
         {
-            commandArgs.Add("resume");
+            commandArgs.Add(ResumeCommandName);
             commandArgs.Add(args.ThreadId);
         }
 
@@ -205,7 +305,7 @@ public sealed class CodexExec
         {
             foreach (var image in args.Images)
             {
-                commandArgs.Add("--image");
+                commandArgs.Add(ImageFlag);
                 commandArgs.Add(image);
             }
         }
@@ -242,15 +342,45 @@ public sealed class CodexExec
 
         if (!string.IsNullOrWhiteSpace(baseUrl))
         {
-            environment["OPENAI_BASE_URL"] = baseUrl;
+            environment[OpenAiBaseUrlEnv] = baseUrl;
         }
 
         if (!string.IsNullOrWhiteSpace(apiKey))
         {
-            environment["CODEX_API_KEY"] = apiKey;
+            environment[CodexApiKeyEnv] = apiKey;
         }
 
         return environment;
+    }
+
+    private static void AddRepeatedFlag(
+        List<string> commandArgs,
+        string flag,
+        IReadOnlyList<string>? values)
+    {
+        if (values is null)
+        {
+            return;
+        }
+
+        foreach (var value in values)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            commandArgs.Add(flag);
+            commandArgs.Add(value);
+        }
+    }
+
+    private static string BuildQuotedConfig(string key, string value) => $"{key}=\"{value}\"";
+
+    private static string BuildBooleanConfig(string key, bool value)
+    {
+        var literal = value ? BooleanTrueLiteral : BooleanFalseLiteral;
+        return $"{key}={literal}";
     }
 }
 
@@ -358,13 +488,39 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
 
 internal static class CliValueExtensions
 {
+    private const string SandboxReadOnly = "read-only";
+    private const string SandboxWorkspaceWrite = "workspace-write";
+    private const string SandboxDangerFullAccess = "danger-full-access";
+
+    private const string ReasoningMinimal = "minimal";
+    private const string ReasoningLow = "low";
+    private const string ReasoningMedium = "medium";
+    private const string ReasoningHigh = "high";
+    private const string ReasoningXHigh = "xhigh";
+
+    private const string WebSearchDisabled = "disabled";
+    private const string WebSearchCached = "cached";
+    private const string WebSearchLive = "live";
+
+    private const string ApprovalNever = "never";
+    private const string ApprovalOnRequest = "on-request";
+    private const string ApprovalOnFailure = "on-failure";
+    private const string ApprovalUntrusted = "untrusted";
+
+    private const string OssProviderLmStudio = "lmstudio";
+    private const string OssProviderOllama = "ollama";
+
+    private const string ColorAlways = "always";
+    private const string ColorNever = "never";
+    private const string ColorAuto = "auto";
+
     public static string ToCliValue(this SandboxMode mode)
     {
         return mode switch
         {
-            SandboxMode.ReadOnly => "read-only",
-            SandboxMode.WorkspaceWrite => "workspace-write",
-            SandboxMode.DangerFullAccess => "danger-full-access",
+            SandboxMode.ReadOnly => SandboxReadOnly,
+            SandboxMode.WorkspaceWrite => SandboxWorkspaceWrite,
+            SandboxMode.DangerFullAccess => SandboxDangerFullAccess,
             _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, null),
         };
     }
@@ -373,11 +529,11 @@ internal static class CliValueExtensions
     {
         return effort switch
         {
-            ModelReasoningEffort.Minimal => "minimal",
-            ModelReasoningEffort.Low => "low",
-            ModelReasoningEffort.Medium => "medium",
-            ModelReasoningEffort.High => "high",
-            ModelReasoningEffort.XHigh => "xhigh",
+            ModelReasoningEffort.Minimal => ReasoningMinimal,
+            ModelReasoningEffort.Low => ReasoningLow,
+            ModelReasoningEffort.Medium => ReasoningMedium,
+            ModelReasoningEffort.High => ReasoningHigh,
+            ModelReasoningEffort.XHigh => ReasoningXHigh,
             _ => throw new ArgumentOutOfRangeException(nameof(effort), effort, null),
         };
     }
@@ -386,9 +542,9 @@ internal static class CliValueExtensions
     {
         return mode switch
         {
-            WebSearchMode.Disabled => "disabled",
-            WebSearchMode.Cached => "cached",
-            WebSearchMode.Live => "live",
+            WebSearchMode.Disabled => WebSearchDisabled,
+            WebSearchMode.Cached => WebSearchCached,
+            WebSearchMode.Live => WebSearchLive,
             _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, null),
         };
     }
@@ -397,11 +553,32 @@ internal static class CliValueExtensions
     {
         return mode switch
         {
-            ApprovalMode.Never => "never",
-            ApprovalMode.OnRequest => "on-request",
-            ApprovalMode.OnFailure => "on-failure",
-            ApprovalMode.Untrusted => "untrusted",
+            ApprovalMode.Never => ApprovalNever,
+            ApprovalMode.OnRequest => ApprovalOnRequest,
+            ApprovalMode.OnFailure => ApprovalOnFailure,
+            ApprovalMode.Untrusted => ApprovalUntrusted,
             _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, null),
+        };
+    }
+
+    public static string ToCliValue(this OssProvider provider)
+    {
+        return provider switch
+        {
+            OssProvider.LmStudio => OssProviderLmStudio,
+            OssProvider.Ollama => OssProviderOllama,
+            _ => throw new ArgumentOutOfRangeException(nameof(provider), provider, null),
+        };
+    }
+
+    public static string ToCliValue(this ExecOutputColor color)
+    {
+        return color switch
+        {
+            ExecOutputColor.Always => ColorAlways,
+            ExecOutputColor.Never => ColorNever,
+            ExecOutputColor.Auto => ColorAuto,
+            _ => throw new ArgumentOutOfRangeException(nameof(color), color, null),
         };
     }
 }

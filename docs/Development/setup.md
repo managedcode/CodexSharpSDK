@@ -43,7 +43,7 @@ dotnet publish tests/AotSmoke/ManagedCode.CodexSharpSDK.AotSmoke.csproj -c Relea
 ## Packaging check
 
 ```bash
-dotnet pack src/CodexSharpSDK.csproj -c Release --no-build -o artifacts
+dotnet pack CodexSharpSDK/CodexSharpSDK.csproj -c Release --no-build -o artifacts
 ```
 
 ## CI/workflows
@@ -51,5 +51,5 @@ dotnet pack src/CodexSharpSDK.csproj -c Release --no-build -o artifacts
 - CI: `.github/workflows/ci.yml`
 - Release: `.github/workflows/release.yml`
 - CodeQL: `.github/workflows/codeql.yml`
-- TypeScript sync watcher: `.github/workflows/typescript-sdk-watch.yml`
+- Codex CLI sync watcher: `.github/workflows/codex-cli-watch.yml`
 - Real integration matrix: `.github/workflows/real-integration.yml`

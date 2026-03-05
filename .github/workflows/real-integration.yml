@@ -1,4 +1,4 @@
-name: Real Integration
+name: Codex CLI Smoke
 
 on:
   schedule:
@@ -13,8 +13,8 @@ env:
   NODE_VERSION: '22'
 
 jobs:
-  codex-real-integration:
-    name: Real Codex Integration (${{ matrix.os }})
+  codex-cli-smoke:
+    name: Codex CLI Smoke (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -43,7 +43,8 @@ jobs:
       - name: Restore
         run: dotnet restore ManagedCode.CodexSharpSDK.slnx
 
-      - name: Run real integration tests
-        run: dotnet test --project CodexSharpSDK.Tests/CodexSharpSDK.Tests.csproj -c Release -- --treenode-filter "/*/*/*/RunAsync_WithRealCodexCli_*"
-        env:
-          CODEX_TEST_MODEL: gpt-5.3-codex
+      - name: Build
+        run: dotnet build ManagedCode.CodexSharpSDK.slnx -c Release -warnaserror --no-restore
+
+      - name: Smoke tests (Codex CLI discover + invoke)
+        run: dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release --no-build -- --treenode-filter "/*/*/*/CodexCli_Smoke_*"

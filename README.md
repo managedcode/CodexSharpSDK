@@ -8,7 +8,7 @@
 
 `ManagedCode.CodexSharpSDK` is an open-source .NET SDK for driving the Codex CLI from C#.
 
-It ports the TypeScript SDK from `openai/codex` to `.NET 10 / C# 14` with:
+It is a CLI-first `.NET 10 / C# 14` SDK aligned with real `codex` runtime behavior, with:
 - thread-based API (`start` / `resume`)
 - streamed JSONL events
 - structured output schema support
@@ -22,20 +22,6 @@ All consumer usage examples are documented in this README; this repository inten
 
 ```bash
 dotnet add package ManagedCode.CodexSharpSDK
-```
-
-## Namespace Migration
-
-`ManagedCode.CodexSharp` was renamed to `ManagedCode.CodexSharpSDK`.
-
-Consumer update:
-
-```csharp
-// old
-using ManagedCode.CodexSharp;
-
-// new
-using ManagedCode.CodexSharpSDK;
 ```
 
 ## Quickstart
@@ -79,6 +65,58 @@ var thread = client.StartThread(new ThreadOptions
 });
 ```
 
+## Extended CLI Options
+
+`ThreadOptions` supports full `codex exec` control.
+
+```csharp
+var thread = client.StartThread(new ThreadOptions
+{
+    Profile = "strict",
+    UseOss = true,
+    LocalProvider = OssProvider.LmStudio,
+    FullAuto = true,
+    Ephemeral = true,
+    Color = ExecOutputColor.Auto,
+    EnabledFeatures = ["multi_agent"],
+    DisabledFeatures = ["steer"],
+    AdditionalCliArguments = ["--some-future-flag", "custom-value"],
+});
+```
+
+## Codex CLI Metadata
+
+```csharp
+using var client = new CodexClient();
+
+var metadata = client.GetCliMetadata();
+Console.WriteLine($"Installed codex-cli: {metadata.InstalledVersion}");
+Console.WriteLine($"Default model: {metadata.DefaultModel ?? "(not set)"}");
+
+foreach (var model in metadata.Models.Where(model => model.IsListed))
+{
+    Console.WriteLine(model.Slug);
+}
+```
+
+`GetCliMetadata()` reads:
+- installed CLI version from `codex --version`
+- default model from `~/.codex/config.toml`
+- model catalog from `~/.codex/models_cache.json`
+
+```csharp
+var update = client.GetCliUpdateStatus();
+if (update.IsUpdateAvailable)
+{
+    Console.WriteLine(update.UpdateMessage);
+    Console.WriteLine(update.UpdateCommand);
+}
+```
+
+`GetCliUpdateStatus()` compares installed CLI version with latest published `@openai/codex` npm version and returns an update command matched to your install context (`bun` or `npm`).
+
+When thread-level web search options are omitted, SDK does not emit a `web_search` override and leaves your existing CLI/config value as-is.
+
 ## Client Lifecycle and Thread Safety
 
 - `CodexClient` is safe for concurrent use from multiple threads.
@@ -109,22 +147,44 @@ await foreach (var evt in streamed.Events)
 ## Structured Output
 
 ```csharp
-using System.Text.Json;
+using System.Text.Json.Serialization;
 
 public sealed record RepositorySummary(string Summary, string Status);
+
+[JsonSerializable(typeof(RepositorySummary))]
+internal sealed partial class AppJsonContext : JsonSerializerContext;
 
 var schema = StructuredOutputSchema.Map<RepositorySummary>(
     additionalProperties: false,
     (response => response.Summary, StructuredOutputSchema.PlainText()),
     (response => response.Status, StructuredOutputSchema.PlainText()));
 
-var result = await thread.RunAsync(
+var result = await thread.RunAsync<RepositorySummary>(
     "Summarize repository status",
-    new TurnOptions { OutputSchema = schema });
-
-var typed = JsonSerializer.Deserialize<RepositorySummary>(result.FinalResponse)
-    ?? throw new InvalidOperationException("Model returned invalid structured output.");
+    schema,
+    AppJsonContext.Default.RepositorySummary);
+Console.WriteLine(result.TypedResponse.Status);
+Console.WriteLine(result.TypedResponse.Summary);
 ```
+
+For advanced options (for example cancellation), use the `TurnOptions` overload:
+
+```csharp
+using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+var result = await thread.RunAsync<RepositorySummary>(
+    "Summarize repository status",
+    AppJsonContext.Default.RepositorySummary,
+    new TurnOptions
+    {
+        OutputSchema = schema,
+        CancellationToken = cancellation.Token,
+    });
+```
+
+`RunAsync<TResponse>` always requires `OutputSchema` (direct parameter or `TurnOptions.OutputSchema`).
+For AOT/trimming-safe typed deserialization, pass `JsonTypeInfo<TResponse>` from a source-generated context.
+Overloads without `JsonTypeInfo<TResponse>` are explicitly marked with `RequiresDynamicCode` and `RequiresUnreferencedCode`.
 
 ## Diagnostics Logging (Optional)
 
@@ -205,10 +265,3 @@ dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release
 dotnet publish tests/AotSmoke/ManagedCode.CodexSharpSDK.AotSmoke.csproj \
   -c Release -r linux-x64 -p:PublishAot=true --self-contained true
 ```
-
-## Porting References
-
-- TypeScript source of truth: [`submodules/openai-codex/sdk/typescript`](submodules/openai-codex/sdk/typescript)
-- Detailed migration checklist: [`PORTING_TODO.md`](PORTING_TODO.md)
-- Dotnet style reference: [github/copilot-sdk](https://github.com/github/copilot-sdk/tree/main/dotnet)
-- CI/release style reference: [managedcode/Storage](https://github.com/managedcode/Storage)

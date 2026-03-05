@@ -1,4 +1,4 @@
-# Feature: Release and TypeScript Sync Automation
+# Feature: Release and Codex CLI Sync Automation
 
 Links:
 Architecture: [docs/Architecture/Overview.md](../Architecture/Overview.md)
@@ -9,7 +9,7 @@ ADRs: [001-codex-cli-wrapper.md](../ADR/001-codex-cli-wrapper.md)
 
 ## Purpose
 
-Keep package quality and TypeScript parity automatically verified through GitHub workflows.
+Keep package quality and upstream Codex CLI parity automatically verified through GitHub workflows.
 
 ---
 
@@ -20,7 +20,7 @@ Keep package quality and TypeScript parity automatically verified through GitHub
 - CI workflow (`ci.yml`)
 - release workflow (`release.yml`)
 - CodeQL workflow (`codeql.yml`)
-- upstream watch workflow (`typescript-sdk-watch.yml`)
+- upstream watch workflow (`codex-cli-watch.yml`)
 - real integration matrix workflow (`real-integration.yml`)
 
 ### Out of scope
@@ -34,10 +34,13 @@ Keep package quality and TypeScript parity automatically verified through GitHub
 
 - CI must run build and tests on every push/PR.
 - Release workflow must build/test before pack/publish.
-- Release workflow must read package version from `src/CodexSharpSDK.csproj`.
+- Release workflow must read package version from `Directory.Build.props`.
 - Release workflow must validate semantic version format before packaging.
 - Release workflow must use generated GitHub release notes.
-- TypeScript watch runs daily and opens issue only when `sdk/typescript` changed upstream.
+- Release workflow must create/push git tag `v<version>` before publishing GitHub release.
+- Codex CLI watch runs daily and opens issue when upstream `openai/codex` changed since pinned submodule SHA.
+- Sync issue body must include detected candidate changes for CLI flags/models/features and actionable checklist.
+- Sync issue must assign Copilot by default.
 - Duplicate sync issue for same upstream SHA is not allowed.
 
 ---
@@ -48,8 +51,8 @@ Keep package quality and TypeScript parity automatically verified through GitHub
 flowchart LR
   Push["push / pull_request"] --> CI["ci.yml"]
   Main["push main"] --> Release["release.yml"]
-  Daily["daily cron"] --> Watch["typescript-sdk-watch.yml"]
-  Watch --> Issue["GitHub Issue: TS SDK sync"]
+  Daily["daily cron"] --> Watch["codex-cli-watch.yml"]
+  Watch --> Issue["GitHub Issue: Codex CLI sync"]
   CI --> Quality["build + test + aot smoke"]
   Release --> NuGet["NuGet publish + GitHub release"]
 ```
@@ -69,7 +72,7 @@ flowchart LR
 - CI: [ci.yml](../../.github/workflows/ci.yml)
 - Release: [release.yml](../../.github/workflows/release.yml)
 - CodeQL: [codeql.yml](../../.github/workflows/codeql.yml)
-- TS Watch: [typescript-sdk-watch.yml](../../.github/workflows/typescript-sdk-watch.yml)
+- CLI Watch: [codex-cli-watch.yml](../../.github/workflows/codex-cli-watch.yml)
 - Real integration matrix: [real-integration.yml](../../.github/workflows/real-integration.yml)
 
 ---

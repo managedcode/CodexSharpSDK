@@ -1,4 +1,7 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using ManagedCode.CodexSharpSDK.Configuration;
 using ManagedCode.CodexSharpSDK.Exceptions;
 using ManagedCode.CodexSharpSDK.Execution;
@@ -13,6 +16,15 @@ namespace ManagedCode.CodexSharpSDK.Client;
 public sealed class CodexThread
     : IDisposable
 {
+    private const string TypedRunRequiresOutputSchemaMessage = "Typed run requires TurnOptions.OutputSchema to be set.";
+    private const string EmptyTypedRunResponseMessagePrefix = "Model returned empty structured output for type";
+    private const string TypedRunDeserializeFailedMessagePrefix = "Failed to deserialize model response to type";
+    private const string TypedRunRequiresTypeInfoMessage =
+        "Reflection-based JSON serialization is disabled. Use RunAsync<TResponse>(..., JsonTypeInfo<TResponse>, ...) for typed output.";
+    private const string ReflectionDisabledErrorToken = "Reflection-based serialization has been disabled";
+    private const string AotUnsafeTypedRunMessage =
+        "This overload relies on reflection-based JSON serialization and is not AOT/trimming-safe. Use the JsonTypeInfo<TResponse> overload.";
+
     private readonly CodexExec _exec;
     private readonly CodexOptions _options;
     private readonly ThreadOptions _threadOptions;
@@ -65,6 +77,108 @@ public sealed class CodexThread
         ThrowIfDisposed();
         var normalizedInput = NormalizeInput(input);
         return RunInternalAsync(normalizedInput, turnOptions ?? new TurnOptions());
+    }
+
+    [RequiresDynamicCode(AotUnsafeTypedRunMessage)]
+    [RequiresUnreferencedCode(AotUnsafeTypedRunMessage)]
+    public async Task<RunResult<TResponse>> RunAsync<TResponse>(string input, TurnOptions? turnOptions = null)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(input);
+        var runOptions = EnsureTypedRunOptions(turnOptions);
+        var normalizedInput = new NormalizedInput(input, []);
+        return await RunTypedInternalAsync<TResponse>(normalizedInput, runOptions, jsonTypeInfo: null).ConfigureAwait(false);
+    }
+
+    public async Task<RunResult<TResponse>> RunAsync<TResponse>(
+        string input,
+        JsonTypeInfo<TResponse> jsonTypeInfo,
+        TurnOptions? turnOptions = null)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(jsonTypeInfo);
+        var runOptions = EnsureTypedRunOptions(turnOptions);
+        var normalizedInput = new NormalizedInput(input, []);
+        return await RunTypedInternalAsync(normalizedInput, runOptions, jsonTypeInfo).ConfigureAwait(false);
+    }
+
+    [RequiresDynamicCode(AotUnsafeTypedRunMessage)]
+    [RequiresUnreferencedCode(AotUnsafeTypedRunMessage)]
+    public async Task<RunResult<TResponse>> RunAsync<TResponse>(IReadOnlyList<UserInput> input, TurnOptions? turnOptions = null)
+    {
+        ThrowIfDisposed();
+        var runOptions = EnsureTypedRunOptions(turnOptions);
+        var normalizedInput = NormalizeInput(input);
+        return await RunTypedInternalAsync<TResponse>(normalizedInput, runOptions, jsonTypeInfo: null).ConfigureAwait(false);
+    }
+
+    public async Task<RunResult<TResponse>> RunAsync<TResponse>(
+        IReadOnlyList<UserInput> input,
+        JsonTypeInfo<TResponse> jsonTypeInfo,
+        TurnOptions? turnOptions = null)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(jsonTypeInfo);
+        var runOptions = EnsureTypedRunOptions(turnOptions);
+        var normalizedInput = NormalizeInput(input);
+        return await RunTypedInternalAsync(normalizedInput, runOptions, jsonTypeInfo).ConfigureAwait(false);
+    }
+
+    [RequiresDynamicCode(AotUnsafeTypedRunMessage)]
+    [RequiresUnreferencedCode(AotUnsafeTypedRunMessage)]
+    public Task<RunResult<TResponse>> RunAsync<TResponse>(
+        string input,
+        StructuredOutputSchema outputSchema,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(input);
+        var normalizedInput = new NormalizedInput(input, []);
+        var runOptions = CreateTypedTurnOptions(outputSchema, cancellationToken);
+        return RunTypedInternalAsync<TResponse>(normalizedInput, runOptions, jsonTypeInfo: null);
+    }
+
+    public Task<RunResult<TResponse>> RunAsync<TResponse>(
+        string input,
+        StructuredOutputSchema outputSchema,
+        JsonTypeInfo<TResponse> jsonTypeInfo,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(jsonTypeInfo);
+        var normalizedInput = new NormalizedInput(input, []);
+        var runOptions = CreateTypedTurnOptions(outputSchema, cancellationToken);
+        return RunTypedInternalAsync(normalizedInput, runOptions, jsonTypeInfo);
+    }
+
+    [RequiresDynamicCode(AotUnsafeTypedRunMessage)]
+    [RequiresUnreferencedCode(AotUnsafeTypedRunMessage)]
+    public Task<RunResult<TResponse>> RunAsync<TResponse>(
+        IReadOnlyList<UserInput> input,
+        StructuredOutputSchema outputSchema,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        var normalizedInput = NormalizeInput(input);
+        var runOptions = CreateTypedTurnOptions(outputSchema, cancellationToken);
+        return RunTypedInternalAsync<TResponse>(normalizedInput, runOptions, jsonTypeInfo: null);
+    }
+
+    public Task<RunResult<TResponse>> RunAsync<TResponse>(
+        IReadOnlyList<UserInput> input,
+        StructuredOutputSchema outputSchema,
+        JsonTypeInfo<TResponse> jsonTypeInfo,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(jsonTypeInfo);
+        var normalizedInput = NormalizeInput(input);
+        var runOptions = CreateTypedTurnOptions(outputSchema, cancellationToken);
+        return RunTypedInternalAsync(normalizedInput, runOptions, jsonTypeInfo);
     }
 
     public void Dispose()
@@ -174,6 +288,18 @@ public sealed class CodexThread
             SandboxMode = _threadOptions.SandboxMode,
             WorkingDirectory = _threadOptions.WorkingDirectory,
             AdditionalDirectories = _threadOptions.AdditionalDirectories,
+            Profile = _threadOptions.Profile,
+            UseOss = _threadOptions.UseOss,
+            LocalProvider = _threadOptions.LocalProvider,
+            FullAuto = _threadOptions.FullAuto,
+            DangerouslyBypassApprovalsAndSandbox = _threadOptions.DangerouslyBypassApprovalsAndSandbox,
+            Ephemeral = _threadOptions.Ephemeral,
+            Color = _threadOptions.Color,
+            ProgressCursor = _threadOptions.ProgressCursor,
+            OutputLastMessageFile = _threadOptions.OutputLastMessageFile,
+            EnabledFeatures = _threadOptions.EnabledFeatures,
+            DisabledFeatures = _threadOptions.DisabledFeatures,
+            AdditionalCliArguments = _threadOptions.AdditionalCliArguments,
             SkipGitRepoCheck = _threadOptions.SkipGitRepoCheck,
             OutputSchemaFile = outputSchemaFile.SchemaPath,
             ModelReasoningEffort = _threadOptions.ModelReasoningEffort,
@@ -230,6 +356,75 @@ public sealed class CodexThread
         }
 
         return new NormalizedInput(string.Join("\n\n", promptParts), images);
+    }
+
+    private static TurnOptions EnsureTypedRunOptions(TurnOptions? turnOptions)
+    {
+        var resolvedOptions = turnOptions ?? new TurnOptions();
+        if (resolvedOptions.OutputSchema is null)
+        {
+            throw new InvalidOperationException(TypedRunRequiresOutputSchemaMessage);
+        }
+
+        return resolvedOptions;
+    }
+
+    private static TurnOptions CreateTypedTurnOptions(
+        StructuredOutputSchema outputSchema,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(outputSchema);
+        return new TurnOptions
+        {
+            OutputSchema = outputSchema,
+            CancellationToken = cancellationToken,
+        };
+    }
+
+    private async Task<RunResult<TResponse>> RunTypedInternalAsync<TResponse>(
+        NormalizedInput normalizedInput,
+        TurnOptions turnOptions,
+        JsonTypeInfo<TResponse>? jsonTypeInfo)
+    {
+        var runResult = await RunInternalAsync(normalizedInput, turnOptions).ConfigureAwait(false);
+        var typedResponse = DeserializeTypedResponse(runResult.FinalResponse, jsonTypeInfo);
+
+        return new RunResult<TResponse>(
+            runResult.Items,
+            runResult.FinalResponse,
+            runResult.Usage,
+            typedResponse);
+    }
+
+    private static TResponse DeserializeTypedResponse<TResponse>(
+        string payload,
+        JsonTypeInfo<TResponse>? jsonTypeInfo)
+    {
+        try
+        {
+            var response = jsonTypeInfo is null
+                ? JsonSerializer.Deserialize<TResponse>(payload)
+                : JsonSerializer.Deserialize(payload, jsonTypeInfo);
+            return response
+                ?? throw new InvalidOperationException(
+                    $"{EmptyTypedRunResponseMessagePrefix} '{typeof(TResponse).Name}'.");
+        }
+        catch (InvalidOperationException exception)
+            when (jsonTypeInfo is null && IsReflectionDisabledSerializationError(exception))
+        {
+            throw new InvalidOperationException(TypedRunRequiresTypeInfoMessage, exception);
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidOperationException(
+                $"{TypedRunDeserializeFailedMessagePrefix} '{typeof(TResponse).Name}'.",
+                exception);
+        }
+    }
+
+    private static bool IsReflectionDisabledSerializationError(InvalidOperationException exception)
+    {
+        return exception.Message.Contains(ReflectionDisabledErrorToken, StringComparison.Ordinal);
     }
 
     private void ThrowIfDisposed()

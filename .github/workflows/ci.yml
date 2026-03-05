@@ -8,11 +8,16 @@ on:
 
 env:
   DOTNET_VERSION: '10.0.x'
+  NODE_VERSION: '22'
 
 jobs:
   build-test:
-    name: Build and Test
-    runs-on: ubuntu-latest
+    name: Build and Codex CLI Smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -20,10 +25,18 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Install Codex CLI
+        run: npm install --no-save @openai/codex
 
       - name: Restore
         run: dotnet restore ManagedCode.CodexSharpSDK.slnx
@@ -31,8 +44,8 @@ jobs:
       - name: Build
         run: dotnet build ManagedCode.CodexSharpSDK.slnx -c Release -warnaserror --no-restore
 
-      - name: Test
-        run: dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release --no-build
+      - name: Smoke tests (Codex CLI discover + invoke)
+        run: dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release --no-build -- --treenode-filter "/*/*/*/CodexCli_Smoke_*"
 
   aot-smoke:
     name: NativeAOT Smoke

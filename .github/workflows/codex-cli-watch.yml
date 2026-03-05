@@ -1,4 +1,4 @@
-name: TypeScript SDK Watch
+name: Codex CLI Upstream Watch
 
 on:
   schedule:
@@ -10,12 +10,12 @@ permissions:
   issues: write
 
 concurrency:
-  group: typescript-sdk-watch
+  group: codex-cli-upstream-watch
   cancel-in-progress: false
 
 jobs:
   detect-and-open-issue:
-    name: Detect TypeScript SDK Updates
+    name: Detect Codex CLI Upstream Updates
     runs-on: ubuntu-latest
 
     steps:
@@ -25,14 +25,22 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Detect updates in openai/codex sdk/typescript
+      - name: Detect updates in openai/codex
         id: detect
         shell: bash
         run: |
           set -euo pipefail
 
           SUBMODULE_PATH="submodules/openai-codex"
-          TARGET_PATH="sdk/typescript"
+          SURFACE_PATHS=(
+            "codex-rs"
+            "docs"
+            "README.md"
+            "CHANGELOG.md"
+            "Cargo.toml"
+            "Cargo.lock"
+            "package.json"
+          )
 
           if [ ! -d "$SUBMODULE_PATH/.git" ] && [ ! -f "$SUBMODULE_PATH/.git" ]; then
             echo "Submodule not initialized: $SUBMODULE_PATH"
@@ -42,7 +50,6 @@ jobs:
 
           current_sha="$(git -C "$SUBMODULE_PATH" rev-parse HEAD)"
           default_branch="$(git -C "$SUBMODULE_PATH" remote show origin | sed -n '/HEAD branch/s/.*: //p')"
-
           if [ -z "$default_branch" ]; then
             default_branch="main"
           fi
@@ -60,57 +67,95 @@ jobs:
             exit 0
           fi
 
-          changed_files="$(git -C "$SUBMODULE_PATH" diff --name-only "$current_sha" "$latest_sha" -- "$TARGET_PATH")"
-
+          changed_files="$(git -C "$SUBMODULE_PATH" diff --name-only "$current_sha" "$latest_sha")"
           if [ -z "$changed_files" ]; then
-            echo "Upstream changed, but not in $TARGET_PATH."
             echo "has_update=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           echo "has_update=true" >> "$GITHUB_OUTPUT"
 
-          {
-            echo "changed_files<<EOF"
-            echo "$changed_files"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          cli_changed_files="$(printf '%s\n' "$changed_files" | grep -E '^(codex-rs/|docs/|README\.md|CHANGELOG\.md|Cargo\.toml|Cargo\.lock|package\.json)' || true)"
+          if [ -z "$cli_changed_files" ]; then
+            cli_changed_files="$(printf '%s\n' "$changed_files" | head -n 200)"
+          fi
 
-          commits="$(git -C "$SUBMODULE_PATH" log --no-merges --date=short --pretty=format:'- %h %s (%ad)' "$current_sha..$latest_sha" -- "$TARGET_PATH" | head -n 80)"
-
+          commits="$(git -C "$SUBMODULE_PATH" log --no-merges --date=short --pretty=format:'- %h %s (%ad)' "$current_sha..$latest_sha" | head -n 100)"
           if [ -z "$commits" ]; then
-            commits="- No commit messages found for $TARGET_PATH (file-level diff exists)."
+            commits='- No commit summary available.'
+          fi
+
+          surface_diff="$(git -C "$SUBMODULE_PATH" diff --unified=0 "$current_sha" "$latest_sha" -- "${SURFACE_PATHS[@]}" || true)"
+
+          changed_flags="$(printf '%s\n' "$surface_diff" | grep -Eo -- '--[a-z0-9][a-z0-9-]*' | sort -u | head -n 200 || true)"
+          changed_models="$(printf '%s\n' "$surface_diff" | grep -Eo -- 'gpt-[0-9][a-z0-9.-]*' | sort -u | head -n 200 || true)"
+          changed_features="$(printf '%s\n' "$surface_diff" | grep -Eo -- 'features\.[a-zA-Z0-9_.-]+' | sed 's/^features\.//' | sort -u | head -n 200 || true)"
+
+          if [ -z "$changed_flags" ]; then
+            changed_flags='- (no CLI flag tokens detected from diff)'
+          else
+            changed_flags="$(printf '%s\n' "$changed_flags" | sed 's/^/- `/' | sed 's/$/`/')"
+          fi
+
+          if [ -z "$changed_models" ]; then
+            changed_models='- (no model tokens detected from diff)'
+          else
+            changed_models="$(printf '%s\n' "$changed_models" | sed 's/^/- `/' | sed 's/$/`/')"
+          fi
+
+          if [ -z "$changed_features" ]; then
+            changed_features='- (no feature tokens detected from diff)'
+          else
+            changed_features="$(printf '%s\n' "$changed_features" | sed 's/^/- `/' | sed 's/$/`/')"
           fi
 
           {
+            echo "cli_changed_files<<EOF"
+            echo "$cli_changed_files"
+            echo "EOF"
             echo "commits<<EOF"
             echo "$commits"
             echo "EOF"
+            echo "changed_flags<<EOF"
+            echo "$changed_flags"
+            echo "EOF"
+            echo "changed_models<<EOF"
+            echo "$changed_models"
+            echo "EOF"
+            echo "changed_features<<EOF"
+            echo "$changed_features"
+            echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Create issue for TypeScript SDK update
+      - name: Create issue for Codex CLI update
         if: steps.detect.outputs.has_update == 'true'
         uses: actions/github-script@v7
         env:
           CURRENT_SHA: ${{ steps.detect.outputs.current_sha }}
           LATEST_SHA: ${{ steps.detect.outputs.latest_sha }}
           DEFAULT_BRANCH: ${{ steps.detect.outputs.default_branch }}
-          CHANGED_FILES: ${{ steps.detect.outputs.changed_files }}
+          CLI_CHANGED_FILES: ${{ steps.detect.outputs.cli_changed_files }}
           COMMITS: ${{ steps.detect.outputs.commits }}
-          ASSIGNEE: ${{ vars.SDK_SYNC_ASSIGNEE != '' && vars.SDK_SYNC_ASSIGNEE || 'codex' }}
+          CHANGED_FLAGS: ${{ steps.detect.outputs.changed_flags }}
+          CHANGED_MODELS: ${{ steps.detect.outputs.changed_models }}
+          CHANGED_FEATURES: ${{ steps.detect.outputs.changed_features }}
+          ASSIGNEE: ${{ vars.SDK_SYNC_ASSIGNEE != '' && vars.SDK_SYNC_ASSIGNEE || 'copilot' }}
         with:
           script: |
             const currentSha = process.env.CURRENT_SHA;
             const latestSha = process.env.LATEST_SHA;
             const defaultBranch = process.env.DEFAULT_BRANCH;
-            const changedFilesRaw = process.env.CHANGED_FILES || '';
+            const changedFilesRaw = process.env.CLI_CHANGED_FILES || '';
             const commitsRaw = process.env.COMMITS || '';
-            const assignee = process.env.ASSIGNEE || 'codex';
+            const changedFlags = process.env.CHANGED_FLAGS || '- (not provided)';
+            const changedModels = process.env.CHANGED_MODELS || '- (not provided)';
+            const changedFeatures = process.env.CHANGED_FEATURES || '- (not provided)';
+            const assignee = process.env.ASSIGNEE || 'copilot';
 
             const shortCurrent = currentSha.slice(0, 7);
             const shortLatest = latestSha.slice(0, 7);
-            const marker = `<!-- codexsharp-typescript-sdk-update:${latestSha} -->`;
-            const labelName = 'typescript-sdk-sync';
+            const marker = `<!-- codexsharp-codex-cli-update:${latestSha} -->`;
+            const labelName = 'codex-cli-sync';
 
             const changedFiles = changedFilesRaw
               .split('\n')
@@ -121,21 +166,21 @@ jobs:
               .join('\n');
 
             const commits = commitsRaw.trim() || '- No commit summary available.';
+            const compareUrl = `https://github.com/openai/codex/compare/${currentSha}...${latestSha}`;
+            const latestCommitUrl = `https://github.com/openai/codex/commit/${latestSha}`;
 
-            // Ensure label exists (ignore if it already exists or cannot be created).
             try {
               await github.rest.issues.createLabel({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 name: labelName,
                 color: '0e8a16',
-                description: 'Tracks upstream TypeScript SDK updates from openai/codex',
+                description: 'Tracks upstream Codex CLI changes from openai/codex',
               });
             } catch (error) {
               core.info(`Label create skipped: ${error.message}`);
             }
 
-            // Avoid duplicate issue for the same upstream SHA.
             const openIssues = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -153,35 +198,41 @@ jobs:
               return;
             }
 
-            const title = `Sync TypeScript SDK from openai/codex (${shortCurrent} -> ${shortLatest})`;
-            const compareUrl = `https://github.com/openai/codex/compare/${currentSha}...${latestSha}`;
-            const submoduleCommitUrl = `https://github.com/openai/codex/commit/${latestSha}`;
-
+            const title = `Sync Codex CLI upstream changes (${shortCurrent} -> ${shortLatest})`;
             const body = [
               marker,
               '',
-              'Detected upstream updates in `openai/codex/sdk/typescript`.',
+              'Detected upstream updates in `openai/codex` affecting CLI surface tracking.',
               '',
               `- Submodule path: \`submodules/openai-codex\``,
               `- Watched branch: \`${defaultBranch}\``,
               `- Current pinned commit: \`${currentSha}\``,
               `- Latest upstream commit: \`${latestSha}\``,
               `- Compare: ${compareUrl}`,
-              `- Latest commit: ${submoduleCommitUrl}`,
+              `- Latest commit: ${latestCommitUrl}`,
               '',
-              '## Changed files (`sdk/typescript`)',
+              '## Changed files (CLI-relevant)',
               changedFiles || '- (No file list available)',
               '',
-              '## Commits touching `sdk/typescript`',
+              '## Potential CLI flag changes from diff',
+              changedFlags,
+              '',
+              '## Potential model changes from diff',
+              changedModels,
+              '',
+              '## Potential feature changes from diff',
+              changedFeatures,
+              '',
+              '## Commits',
               commits,
               '',
               '## Action required',
-              '- [ ] Review upstream TypeScript SDK changes',
-              '- [ ] Update the C# SDK in this repository to keep parity',
-              '- [ ] Add/adjust tests for new behavior',
-              '- [ ] Update docs/changelog if public API changed',
+              '- [ ] Validate latest `codex --help` and `codex exec --help` output',
+              '- [ ] Sync C# SDK constants/options/models with upstream CLI changes',
+              '- [ ] Add or update tests for new flags/models/features',
+              '- [ ] Update docs (README + docs/Features + docs/Architecture if needed)',
               '',
-              `_Opened automatically by scheduled workflow \'TypeScript SDK Watch\'._',
+              `_Opened automatically by scheduled workflow 'Codex CLI Upstream Watch'._`,
             ].join('\n');
 
             let issue;

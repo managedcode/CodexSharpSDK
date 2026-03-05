@@ -89,6 +89,8 @@ If no new rule is detected -> do not update the file.
 - Implement code and tests together.
 - When asked to fix review findings, close every confirmed finding in the same pass; do not leave partial fixes.
 - Do not keep or add public sample projects; repository focus is SDK + tests (including AOT tests) only.
+- Upstream sync automation must track real `openai/codex` CLI changes (flags/models/features), not TypeScript SDK surface diffs, and open actionable repository issues for required SDK follow-up.
+- Automatically opened upstream sync issues must include change summary/checklist and assign Copilot by default.
 - Run verification in this order:
   - focused tests for changed behavior
   - full solution tests
@@ -121,6 +123,7 @@ If no new rule is detected -> do not update the file.
 - Integration test sandboxes must be created under the repository `tests` tree (for example `tests/.sandbox/*`) for deterministic, inspectable paths; do not use `Path.GetTempPath()` for test sandbox directories.
 - For CLI process interaction tests, use the real installed `codex` CLI (no `FakeCodexProcessRunner` test doubles).
 - Treat `codex` CLI as a test prerequisite: ensure local/CI test setup installs `codex` before running CLI interaction tests; do not replace this with fakes.
+- CI must validate SDK on all Codex-supported desktop/server platforms (macOS, Linux, Windows): run build + tests and include a non-auth smoke check that `codex` is discoverable and invokable.
 - Real Codex integration tests must rely on existing local Codex CLI login/session only; do not read or require `OPENAI_API_KEY` in test setup.
 - Do not use nullable `TryGetSettings()` + early `return` skip patterns in real integration tests; resolve required settings directly and fail fast with actionable errors when missing.
 - Do not bypass integration tests on Windows with unconditional early returns; keep tests cross-platform for supported Codex CLI environments.
@@ -161,14 +164,17 @@ If no new rule is detected -> do not update the file.
 - Never hardcode guessed Codex/OpenAI model names in tests, docs, or defaults; verify supported models and active default via Codex CLI first.
 - Before setting or changing any `Model` value, read available models and current default from the local `codex` CLI in the same environment/account and only then update code/tests/docs.
 - Model identifiers in code/tests must come from centralized constants or a shared resolver helper; do not inline model string literals repeatedly.
-- Keep C# SDK request options in parity with upstream Codex TypeScript SDK/CLI capabilities and verify against upstream source before changing option surface.
+- For SDK option/model/flag support, use the real `codex` CLI behavior (`codex --help`, `codex exec --help`, runtime checks) as the only source of truth; do not use TypeScript SDK surface as the decision baseline.
+- Do not hardcode npm-only Codex install/update guidance; when generating CLI update/install command text, detect and support `bun` where applicable.
 - Image input API must support passing local image data as file path, `FileInfo`, and `Stream`.
 - Use `Microsoft.Extensions.Logging.ILogger` for SDK logging extension points; do not introduce custom logger interfaces or custom log-level enums.
 - In tests, prefer `Microsoft.Extensions.Logging.Abstractions.NullLogger` instead of custom fake logger implementations when log capture is not required.
 - Default to AOT/trimming-safe patterns (explicit JSON handling, avoid reflection-heavy designs).
+- When API offers both convenience and AOT-safe overloads, explicitly mark AOT-unsafe methods with `RequiresDynamicCode`/`RequiresUnreferencedCode` and point to the `JsonTypeInfo<T>` alternative.
 - Avoid ambiguous option names like `*Override` for primary settings; prefer explicit names (for example executable path / working directory).
 - For this project, remove legacy/compatibility shims immediately (including `[Obsolete]` bridges and duplicate old properties); keep only the current API surface.
 - README first examples must be beginner-friendly: avoid advanced/optional knobs (for example `CodexExecutablePath`) in the very first snippet.
+- README in this repository must describe only current first-version product behavior; do not add migration/legacy compatibility sections or old-namespace guidance.
 - When a README snippet shows model tuning, include `ModelReasoningEffort` together with `Model`.
 - Public examples should build output schemas with typed `StructuredOutputSchema` models and map responses to typed DTOs for readability and maintainability.
 - Do not keep or add `JsonSchema` helper abstractions in SDK API/tests; use typed request/response DTO models instead of schema-builder utilities.
@@ -187,7 +193,7 @@ If no new rule is detected -> do not update the file.
 **Always:**
 
 - Read `AGENTS.md` and relevant docs before editing code.
-- Keep API compatibility with TypeScript SDK mapping documented in `PORTING_TODO.md` unless instructed otherwise.
+- Keep API behavior aligned with actual Codex CLI contracts first; TypeScript SDK mapping may be used only as an optional historical reference, not as a blocker for C# SDK design.
 - Maintain GitHub workflow health (`.github/workflows`).
 
 **Ask first:**

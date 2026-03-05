@@ -2,18 +2,19 @@
 
 ## Goal
 
-Verify `ManagedCode.CodexSharpSDK` behavior against TypeScript SDK semantics with deterministic automated tests.
+Verify `ManagedCode.CodexSharpSDK` behavior against real Codex CLI contracts, with deterministic automated tests for both baseline and additive C# capabilities.
 
 ## Test levels used in this repository
 
 - Primary: TUnit behavior tests in `CodexSharpSDK.Tests`
-- Optional CI matrix: real Codex CLI integration (`.github/workflows/real-integration.yml`)
+- Optional CI matrix: cross-platform Codex CLI smoke verification (`.github/workflows/real-integration.yml`)
 
 ## Principles
 
 - Test observable behavior, not implementation details.
 - Use the real installed `codex` CLI for process interaction tests; do not use `FakeCodexProcessRunner` doubles.
 - Treat `codex` as a prerequisite for real integration runs and install it in CI/local setup before running those tests.
+- CI validates Codex CLI smoke behavior on Linux/macOS/Windows without requiring login: CLI must be discoverable and invokable.
 - Real integration runs must use existing Codex CLI login/session; test harness does not use API key environment variables.
 - Real integration model selection must be explicit: set `CODEX_TEST_MODEL` or define `model` in `~/.codex/config.toml` (no hardcoded fallback model).
 - Cover error paths and cancellation paths.
@@ -35,6 +36,8 @@ TUnit on Microsoft Testing Platform does not support `--filter`; run focused tes
 - `CodexClient` API surface behavior: [CodexClientTests.cs](../../CodexSharpSDK.Tests/Unit/CodexClientTests.cs)
 - CodexThread run/stream/failure behavior: [CodexThreadTests.cs](../../CodexSharpSDK.Tests/Unit/CodexThreadTests.cs)
 - CLI arg/env/config behavior: [CodexExecTests.cs](../../CodexSharpSDK.Tests/Unit/CodexExecTests.cs)
+- CLI metadata parsing behavior: [CodexCliMetadataReaderTests.cs](../../CodexSharpSDK.Tests/Unit/CodexCliMetadataReaderTests.cs)
+- Cross-platform Codex CLI smoke behavior: [CodexCliSmokeTests.cs](../../CodexSharpSDK.Tests/Integration/CodexCliSmokeTests.cs)
 - Real process integration behavior: [CodexExecIntegrationTests.cs](../../CodexSharpSDK.Tests/Integration/CodexExecIntegrationTests.cs)
 - Real Codex CLI integration behavior (local login required): [RealCodexIntegrationTests.cs](../../CodexSharpSDK.Tests/Integration/RealCodexIntegrationTests.cs)
 - Protocol parser behavior: [ThreadEventParserTests.cs](../../CodexSharpSDK.Tests/Unit/ThreadEventParserTests.cs)

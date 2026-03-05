@@ -229,6 +229,28 @@ public class CodexClientTests
     }
 
     [Test]
+    public async Task CodexCli_Smoke_GetCliMetadata_ReturnsInstalledVersion()
+    {
+        using var client = new CodexClient(new CodexOptions());
+
+        var metadata = client.GetCliMetadata();
+
+        await Assert.That(string.IsNullOrWhiteSpace(metadata.InstalledVersion)).IsFalse();
+        await Assert.That(metadata.InstalledVersion.Contains('.')).IsTrue();
+    }
+
+    [Test]
+    public async Task CodexCli_Smoke_GetCliUpdateStatus_ReturnsInstalledVersion()
+    {
+        using var client = new CodexClient(new CodexOptions());
+
+        var status = client.GetCliUpdateStatus();
+
+        await Assert.That(string.IsNullOrWhiteSpace(status.InstalledVersion)).IsFalse();
+        await Assert.That(status.InstalledVersion.Contains('.')).IsTrue();
+    }
+
+    [Test]
     public async Task ResumeThread_WithThreadOptions_RunsWithRealCodexCli()
     {
         var settings = RealCodexTestSupport.GetRequiredSettings();

@@ -17,16 +17,13 @@ public class RealCodexIntegrationTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         var schema = IntegrationOutputSchemas.StatusOnly();
 
-        var result = await thread.RunAsync(
+        var result = await thread.RunAsync<StatusResponse>(
             "Reply with a JSON object where status is exactly \"ok\".",
-            new TurnOptions
-            {
-                OutputSchema = schema,
-                CancellationToken = cancellation.Token,
-            });
+            schema,
+            IntegrationOutputJsonContext.Default.StatusResponse,
+            cancellation.Token);
 
-        var response = IntegrationOutputDeserializer.Deserialize<StatusResponse>(result.FinalResponse);
-        await Assert.That(response.Status).IsEqualTo("ok");
+        await Assert.That(result.TypedResponse.Status).IsEqualTo("ok");
         await Assert.That(result.Usage).IsNotNull();
     }
 
@@ -71,28 +68,23 @@ public class RealCodexIntegrationTests
 
         var schema = IntegrationOutputSchemas.StatusOnly();
 
-        var first = await thread.RunAsync(
+        var first = await thread.RunAsync<StatusResponse>(
             "Reply with a JSON object where status is exactly \"ok\".",
-            new TurnOptions
-            {
-                OutputSchema = schema,
-                CancellationToken = cancellation.Token,
-            });
+            schema,
+            IntegrationOutputJsonContext.Default.StatusResponse,
+            cancellation.Token);
 
         var firstThreadId = thread.Id;
         await Assert.That(firstThreadId).IsNotNull();
         await Assert.That(first.Usage).IsNotNull();
 
-        var second = await thread.RunAsync(
+        var second = await thread.RunAsync<StatusResponse>(
             "Again: reply with a JSON object where status is exactly \"ok\".",
-            new TurnOptions
-            {
-                OutputSchema = schema,
-                CancellationToken = cancellation.Token,
-            });
+            schema,
+            IntegrationOutputJsonContext.Default.StatusResponse,
+            cancellation.Token);
 
-        var secondResponse = IntegrationOutputDeserializer.Deserialize<StatusResponse>(second.FinalResponse);
-        await Assert.That(secondResponse.Status).IsEqualTo("ok");
+        await Assert.That(second.TypedResponse.Status).IsEqualTo("ok");
         await Assert.That(second.Usage).IsNotNull();
         await Assert.That(thread.Id).IsEqualTo(firstThreadId);
     }
