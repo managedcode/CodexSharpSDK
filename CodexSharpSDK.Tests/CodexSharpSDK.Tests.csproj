@@ -6,14 +6,9 @@
     <AssemblyName>ManagedCode.CodexSharpSDK.Tests</AssemblyName>
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
-    <NoWarn>$(NoWarn);CA1707</NoWarn>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CA1707;CS1591</NoWarn>
   </PropertyGroup>
-
-  <ItemGroup>
-    <Compile Remove="AotSmoke/**/*.cs" />
-    <EmbeddedResource Remove="AotSmoke/**" />
-    <None Remove="AotSmoke/**" />
-  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="TUnit" />
