@@ -28,6 +28,7 @@ flowchart LR
   PARSER["Protocol Parsing\nThreadEventParser + Events/Items"]
   IO["Config & Schema IO\nTomlConfigSerializer + OutputSchemaFile"]
   META["CLI Metadata\nCodexCliMetadataReader"]
+  MEAI["M.E.AI Adapter\nCodexChatClient : IChatClient"]
   TESTS["TUnit Tests"]
   CI["GitHub Actions\nCI / Release / CLI Watch"]
 
@@ -36,7 +37,9 @@ flowchart LR
   API --> META
   EXEC --> PARSER
   PARSER --> API
+  MEAI --> API
   TESTS --> API
+  TESTS --> MEAI
   TESTS --> EXEC
   CI --> TESTS
 ```
@@ -86,6 +89,7 @@ flowchart LR
 - `Protocol Parsing` — code: [ThreadEventParser.cs](../../CodexSharpSDK/Internal/ThreadEventParser.cs), [CodexProtocolConstants.cs](../../CodexSharpSDK/Internal/CodexProtocolConstants.cs), [Events.cs](../../CodexSharpSDK/Models/Events.cs), [Items.cs](../../CodexSharpSDK/Models/Items.cs)
 - `Config & Schema IO` — code: [TomlConfigSerializer.cs](../../CodexSharpSDK/Internal/TomlConfigSerializer.cs), [OutputSchemaFile.cs](../../CodexSharpSDK/Internal/OutputSchemaFile.cs), [CodexOptions.cs](../../CodexSharpSDK/Configuration/CodexOptions.cs)
 - `CLI Metadata` — code: [CodexCliMetadataReader.cs](../../CodexSharpSDK/Internal/CodexCliMetadataReader.cs), [CodexCliMetadata.cs](../../CodexSharpSDK/Models/CodexCliMetadata.cs); docs: [cli-metadata.md](../Features/cli-metadata.md)
+- `M.E.AI Adapter` — code: [CodexSharpSDK.Extensions.AI](../../CodexSharpSDK.Extensions.AI); docs: [meai-integration.md](../Features/meai-integration.md); ADR: [003-microsoft-extensions-ai-integration.md](../ADR/003-microsoft-extensions-ai-integration.md)
 - `Testing` — code: [CodexSharpSDK.Tests](../../CodexSharpSDK.Tests); docs: [strategy.md](../Testing/strategy.md)
 - `Automation` — workflows: [.github/workflows](../../.github/workflows) (including `real-integration.yml` and `codex-cli-watch.yml`); docs: [release-and-sync-automation.md](../Features/release-and-sync-automation.md)
 
@@ -107,9 +111,12 @@ flowchart LR
 
 - Allowed dependencies:
   - `CodexSharpSDK.Tests/*` -> `CodexSharpSDK/*`
+  - `CodexSharpSDK.Extensions.AI/*` -> `CodexSharpSDK/*`
+  - `CodexSharpSDK.Extensions.AI.Tests/*` -> `CodexSharpSDK.Extensions.AI/*`, `CodexSharpSDK/*`
   - Public API (`CodexClient`, `CodexThread`) -> internal execution/parsing helpers.
 - Forbidden dependencies:
   - No dependency from `CodexSharpSDK/*` to `CodexSharpSDK.Tests/*`.
+  - No dependency from `CodexSharpSDK/*` to `CodexSharpSDK.Extensions.AI/*` (adapter is opt-in).
   - No runtime dependency on `submodules/openai-codex`; submodule is reference-only.
 - Integration style:
   - sync configuration + async process stream consumption (`IAsyncEnumerable<string>`)
@@ -119,6 +126,7 @@ flowchart LR
 
 - [001-codex-cli-wrapper.md](../ADR/001-codex-cli-wrapper.md) — wrap Codex CLI process as SDK transport.
 - [002-protocol-parsing-and-thread-serialization.md](../ADR/002-protocol-parsing-and-thread-serialization.md) — explicit protocol constants and serialized per-thread turn execution.
+- [003-microsoft-extensions-ai-integration.md](../ADR/003-microsoft-extensions-ai-integration.md) — IChatClient adapter in separate package.
 
 ## 5) Where to go next
 

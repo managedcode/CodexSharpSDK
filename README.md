@@ -265,6 +265,93 @@ var resumed = client.ResumeThread("thread_123");
 await resumed.RunAsync("Continue from previous plan");
 ```
 
+## Microsoft.Extensions.AI Integration
+
+An optional adapter package lets you use CodexSharpSDK through the standard `IChatClient` interface from `Microsoft.Extensions.AI`.
+
+```bash
+dotnet add package ManagedCode.CodexSharpSDK.Extensions.AI
+```
+
+### Basic usage
+
+```csharp
+using Microsoft.Extensions.AI;
+using ManagedCode.CodexSharpSDK.Extensions.AI;
+
+IChatClient client = new CodexChatClient(new CodexChatClientOptions
+{
+    DefaultModel = CodexModels.Gpt53Codex,
+});
+
+var response = await client.GetResponseAsync("Diagnose failing tests and propose a fix");
+Console.WriteLine(response.Text);
+```
+
+### DI registration
+
+```csharp
+using ManagedCode.CodexSharpSDK.Extensions.AI.Extensions;
+
+builder.Services.AddCodexChatClient(options =>
+{
+    options.DefaultModel = CodexModels.Gpt53Codex;
+});
+
+// Then inject IChatClient anywhere:
+app.MapGet("/ask", async (IChatClient client) =>
+{
+    var response = await client.GetResponseAsync("Summarize the repo");
+    return response.Text;
+});
+```
+
+### Streaming
+
+```csharp
+await foreach (var update in client.GetStreamingResponseAsync("Implement the fix"))
+{
+    Console.Write(update.Text);
+}
+```
+
+### Codex-specific options via ChatOptions
+
+```csharp
+var options = new ChatOptions
+{
+    ModelId = CodexModels.Gpt53Codex,
+    AdditionalProperties = new AdditionalPropertiesDictionary
+    {
+        ["codex:sandbox_mode"] = "workspace-write",
+        ["codex:reasoning_effort"] = "high",
+    },
+};
+
+var response = await client.GetResponseAsync("Refactor the auth module", options);
+```
+
+### Rich content types
+
+Codex-specific output items (commands, file changes, MCP tool calls, web searches) are preserved as typed `AIContent` subclasses:
+
+```csharp
+foreach (var content in response.Messages.SelectMany(m => m.Contents))
+{
+    switch (content)
+    {
+        case CommandExecutionContent cmd:
+            Console.WriteLine($"Command: {cmd.Command} (exit {cmd.ExitCode})");
+            break;
+        case FileChangeContent file:
+            Console.WriteLine($"File changes: {file.Changes.Count}");
+            break;
+    }
+}
+```
+
+See [docs/Features/meai-integration.md](docs/Features/meai-integration.md) and [ADR 003](docs/ADR/003-microsoft-extensions-ai-integration.md) for full details.
+
 ## Build and Test
 
 ```bash

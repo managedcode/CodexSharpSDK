@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>ManagedCode.CodexSharpSDK.Extensions.AI.Tests</RootNamespace>
+    <AssemblyName>ManagedCode.CodexSharpSDK.Extensions.AI.Tests</AssemblyName>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CA1707;CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CodexSharpSDK.Extensions.AI\CodexSharpSDK.Extensions.AI.csproj" />
+    <ProjectReference Include="..\CodexSharpSDK\CodexSharpSDK.csproj" />
+  </ItemGroup>
+</Project>
