@@ -1,4 +1,6 @@
 <Solution>
   <Project Path="CodexSharpSDK/CodexSharpSDK.csproj" />
+  <Project Path="CodexSharpSDK.Extensions.AI/CodexSharpSDK.Extensions.AI.csproj" />
   <Project Path="CodexSharpSDK.Tests/CodexSharpSDK.Tests.csproj" />
+  <Project Path="CodexSharpSDK.Extensions.AI.Tests/CodexSharpSDK.Extensions.AI.Tests.csproj" />
 </Solution>
