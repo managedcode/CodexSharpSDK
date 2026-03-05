@@ -123,6 +123,7 @@ If no new rule is detected -> do not update the file.
 - For CLI process interaction tests, use the real installed `codex` CLI (no `FakeCodexProcessRunner` test doubles).
 - Treat `codex` CLI as a test prerequisite: ensure local/CI test setup installs `codex` before running CLI interaction tests; do not replace this with fakes.
 - CI must validate SDK on all Codex-supported desktop/server platforms (macOS, Linux, Windows): run build + tests and include a non-auth smoke check that `codex` is discoverable and invokable.
+- Cross-platform non-auth smoke must run `codex` from local installation in CI and verify unauthenticated behavior explicitly (for example `codex login status` in isolated profile returns "Not logged in"), proving binary discovery + process launch on each platform.
 - Real Codex integration tests must rely on existing local Codex CLI login/session only; do not read or require `OPENAI_API_KEY` in test setup.
 - Do not use nullable `TryGetSettings()` + early `return` skip patterns in real integration tests; resolve required settings directly and fail fast with actionable errors when missing.
 - Do not bypass integration tests on Windows with unconditional early returns; keep tests cross-platform for supported Codex CLI environments.
