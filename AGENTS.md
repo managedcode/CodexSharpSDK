@@ -174,6 +174,7 @@ If no new rule is detected -> do not update the file.
 - For this project, remove legacy/compatibility shims immediately (including `[Obsolete]` bridges and duplicate old properties); keep only the current API surface.
 - README first examples must be beginner-friendly: avoid advanced/optional knobs (for example `CodexExecutablePath`) in the very first snippet.
 - README in this repository must describe only current first-version product behavior; do not add migration/legacy compatibility sections or old-namespace guidance.
+- README must explicitly state runtime prerequisites: `codex` CLI installed and user already authenticated (`codex login`) before SDK usage.
 - When a README snippet shows model tuning, include `ModelReasoningEffort` together with `Model`.
 - Public examples should build output schemas with typed `StructuredOutputSchema` models and map responses to typed DTOs for readability and maintainability.
 - Do not keep or add `JsonSchema` helper abstractions in SDK API/tests; use typed request/response DTO models instead of schema-builder utilities.

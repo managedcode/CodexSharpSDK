@@ -24,6 +24,19 @@ All consumer usage examples are documented in this README; this repository inten
 dotnet add package ManagedCode.CodexSharpSDK
 ```
 
+## Prerequisites
+
+Before using this SDK, you must have:
+- `codex` CLI installed and available in `PATH`
+- an already authenticated Codex session (`codex login`)
+
+Quick check:
+
+```bash
+codex --version
+codex login
+```
+
 ## Quickstart
 
 ```csharp
