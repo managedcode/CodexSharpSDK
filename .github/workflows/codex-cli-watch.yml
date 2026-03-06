@@ -32,15 +32,75 @@ jobs:
           set -euo pipefail
 
           SUBMODULE_PATH="submodules/openai-codex"
-          SURFACE_PATHS=(
-            "codex-rs"
-            "docs"
-            "README.md"
-            "CHANGELOG.md"
-            "Cargo.toml"
-            "Cargo.lock"
-            "package.json"
+          MODELS_FILE="codex-rs/core/models.json"
+          CONFIG_SCHEMA_FILE="codex-rs/core/config.schema.json"
+          FLAG_SOURCE_PATHS=(
+            "codex-rs/cli/src/main.rs"
+            "codex-rs/exec/src/cli.rs"
+            "codex-rs/exec/src/main.rs"
           )
+
+          read_file_at_sha() {
+            local sha="$1"
+            local path="$2"
+            git -C "$SUBMODULE_PATH" show "$sha:$path" 2>/dev/null || true
+          }
+
+          extract_flag_snapshot() {
+            local sha="$1"
+            local path
+
+            for path in "${FLAG_SOURCE_PATHS[@]}"; do
+              read_file_at_sha "$sha" "$path"
+            done | grep -Eo -- '--[a-z0-9][a-z0-9-]*' | sort -u || true
+          }
+
+          extract_model_snapshot() {
+            local sha="$1"
+            read_file_at_sha "$sha" "$MODELS_FILE" \
+              | jq -r '.models[]? | (.id // .slug // empty)' \
+              | sed '/^$/d' \
+              | sort -u || true
+          }
+
+          extract_feature_snapshot() {
+            local sha="$1"
+            read_file_at_sha "$sha" "$CONFIG_SCHEMA_FILE" \
+              | jq -r '.properties.features.properties? | keys[]?' \
+              | sed '/^$/d' \
+              | sort -u || true
+          }
+
+          format_snapshot_changes() {
+            local before_file="$1"
+            local after_file="$2"
+            local empty_message="$3"
+
+            local added
+            local removed
+            local formatted=""
+
+            added="$(comm -13 "$before_file" "$after_file" | sed 's/^/- added `/' | sed 's/$/`/' || true)"
+            removed="$(comm -23 "$before_file" "$after_file" | sed 's/^/- removed `/' | sed 's/$/`/' || true)"
+
+            if [ -n "$added" ]; then
+              formatted="$added"
+            fi
+
+            if [ -n "$removed" ]; then
+              if [ -n "$formatted" ]; then
+                formatted="$formatted"$'\n'"$removed"
+              else
+                formatted="$removed"
+              fi
+            fi
+
+            if [ -z "$formatted" ]; then
+              formatted="$empty_message"
+            fi
+
+            printf '%s\n' "$formatted"
+          }
 
           if [ ! -d "$SUBMODULE_PATH/.git" ] && [ ! -f "$SUBMODULE_PATH/.git" ]; then
             echo "Submodule not initialized: $SUBMODULE_PATH"
@@ -85,29 +145,30 @@ jobs:
             commits='- No commit summary available.'
           fi
 
-          surface_diff="$(git -C "$SUBMODULE_PATH" diff --unified=0 "$current_sha" "$latest_sha" -- "${SURFACE_PATHS[@]}" || true)"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$tmp_dir"' EXIT
 
-          changed_flags="$(printf '%s\n' "$surface_diff" | grep -Eo -- '--[a-z0-9][a-z0-9-]*' | sort -u | head -n 200 || true)"
-          changed_models="$(printf '%s\n' "$surface_diff" | grep -Eo -- 'gpt-[0-9][a-z0-9.-]*' | sort -u | head -n 200 || true)"
-          changed_features="$(printf '%s\n' "$surface_diff" | grep -Eo -- 'features\.[a-zA-Z0-9_.-]+' | sed 's/^features\.//' | sort -u | head -n 200 || true)"
+          extract_flag_snapshot "$current_sha" > "$tmp_dir/flags-before.txt"
+          extract_flag_snapshot "$latest_sha" > "$tmp_dir/flags-after.txt"
+          extract_model_snapshot "$current_sha" > "$tmp_dir/models-before.txt"
+          extract_model_snapshot "$latest_sha" > "$tmp_dir/models-after.txt"
+          extract_feature_snapshot "$current_sha" > "$tmp_dir/features-before.txt"
+          extract_feature_snapshot "$latest_sha" > "$tmp_dir/features-after.txt"
 
-          if [ -z "$changed_flags" ]; then
-            changed_flags='- (no CLI flag tokens detected from diff)'
-          else
-            changed_flags="$(printf '%s\n' "$changed_flags" | sed 's/^/- `/' | sed 's/$/`/')"
-          fi
+          changed_flags="$(format_snapshot_changes \
+            "$tmp_dir/flags-before.txt" \
+            "$tmp_dir/flags-after.txt" \
+            "- (no CLI flag surface change detected from CLI sources)")"
 
-          if [ -z "$changed_models" ]; then
-            changed_models='- (no model tokens detected from diff)'
-          else
-            changed_models="$(printf '%s\n' "$changed_models" | sed 's/^/- `/' | sed 's/$/`/')"
-          fi
+          changed_models="$(format_snapshot_changes \
+            "$tmp_dir/models-before.txt" \
+            "$tmp_dir/models-after.txt" \
+            "- (no model catalog change detected from models.json)")"
 
-          if [ -z "$changed_features" ]; then
-            changed_features='- (no feature tokens detected from diff)'
-          else
-            changed_features="$(printf '%s\n' "$changed_features" | sed 's/^/- `/' | sed 's/$/`/')"
-          fi
+          changed_features="$(format_snapshot_changes \
+            "$tmp_dir/features-before.txt" \
+            "$tmp_dir/features-after.txt" \
+            "- (no feature flag surface change detected from config schema)")"
 
           {
             echo "cli_changed_files<<EOF"
@@ -214,13 +275,13 @@ jobs:
               '## Changed files (CLI-relevant)',
               changedFiles || '- (No file list available)',
               '',
-              '## Potential CLI flag changes from diff',
+              '## Detected CLI flag surface changes',
               changedFlags,
               '',
-              '## Potential model changes from diff',
+              '## Detected model catalog changes',
               changedModels,
               '',
-              '## Potential feature changes from diff',
+              '## Detected feature flag changes',
               changedFeatures,
               '',
               '## Commits',

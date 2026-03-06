@@ -35,14 +35,16 @@ Keep package quality and upstream Codex CLI parity automatically verified throug
 - CI must run build and tests on every push/PR.
 - CI and Release workflows must execute full solution tests before smoke subsets, excluding auth-required tests with `-- --treenode-filter "/*/*/*/*[RequiresCodexAuth!=true]"`.
 - Codex CLI smoke test workflow steps must run `CodexCli_Smoke_*` via `CodexSharpSDK.Tests` project scope to avoid false `zero tests ran` failures in non-smoke test assemblies.
+- Codex CLI smoke validation must cover both `codex --help` and `codex exec --help`, proving root and non-interactive help surfaces stay discoverable.
 - Release workflow must build/test before pack/publish.
 - Release workflow must read package version from `Directory.Build.props`.
 - Release workflow must validate semantic version format before packaging.
+- Release workflow must fail if the produced `.nupkg` version does not match `Directory.Build.props`.
 - Release workflow must use generated GitHub release notes.
 - Release workflow must create/push git tag `v<version>` before publishing GitHub release.
 - Codex CLI watch runs daily and opens issue when upstream `openai/codex` changed since pinned submodule SHA.
 - Completing a Codex CLI sync issue must update the pinned `submodules/openai-codex` commit after validation.
-- Sync issue body must include detected candidate changes for CLI flags/models/features and actionable checklist.
+- Sync issue body must derive flag changes from CLI source snapshots, model changes from `codex-rs/core/models.json`, and feature changes from `codex-rs/core/config.schema.json` so alerts stay actionable.
 - Sync issue must assign Copilot by default.
 - Duplicate sync issue for same upstream SHA is not allowed.
 
@@ -71,6 +73,7 @@ flowchart LR
 - `codex features list`
 - `dotnet build ManagedCode.CodexSharpSDK.slnx -c Release -warnaserror`
 - `dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release`
+- `dotnet pack CodexSharpSDK/CodexSharpSDK.csproj -c Release --no-build -o artifacts`
 
 ### Workflow mapping
 

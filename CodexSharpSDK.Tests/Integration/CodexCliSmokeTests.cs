@@ -30,6 +30,8 @@ public class CodexCliSmokeTests
     private const string StatusCommand = "status";
     private const string HelpFlag = "--help";
     private const string VersionToken = "codex-cli";
+    private const string RootHelpToken = "Codex CLI";
+    private const string RootHelpCommandToken = "exec";
     private const string ExecHelpToken = "Run Codex non-interactively";
     private const string NotLoggedInToken = "Not logged in";
     private const string NotAuthenticatedToken = "Not authenticated";
@@ -52,6 +54,19 @@ public class CodexCliSmokeTests
 
         var output = string.Concat(result.StandardOutput, result.StandardError);
         await Assert.That(output.Contains(VersionToken, StringComparison.OrdinalIgnoreCase)).IsTrue();
+    }
+
+    [Test]
+    public async Task CodexCli_Smoke_HelpCommand_ReturnsRootCommands()
+    {
+        var executablePath = ResolveExecutablePath();
+
+        var result = await RunCodexAsync(executablePath, null, HelpFlag);
+        await Assert.That(result.ExitCode).IsEqualTo(0);
+
+        var output = string.Concat(result.StandardOutput, result.StandardError);
+        await Assert.That(output.Contains(RootHelpToken, StringComparison.Ordinal)).IsTrue();
+        await Assert.That(output.Contains(RootHelpCommandToken, StringComparison.Ordinal)).IsTrue();
     }
 
     [Test]
