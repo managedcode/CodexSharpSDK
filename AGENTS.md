@@ -126,6 +126,7 @@ If no new rule is detected -> do not update the file.
 - Treat `codex` CLI as a test prerequisite: ensure local/CI test setup installs `codex` before running CLI interaction tests; do not replace this with fakes.
 - CI must validate SDK on all Codex-supported desktop/server platforms (macOS, Linux, Windows): run build + tests and include a non-auth smoke check that `codex` is discoverable and invokable.
 - CI/release workflow smoke checks are additive gates; they must not replace full `dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release` execution.
+- Never run auth-dependent real Codex tests in CI pipelines; CI must remain non-auth and deterministic.
 - CI/release full-solution runs must exclude auth-required tests using `-- --treenode-filter "/*/*/*/*[RequiresCodexAuth!=true]"` so pipelines remain non-auth and deterministic.
 - Cross-platform non-auth smoke must run `codex` from local installation in CI and verify unauthenticated behavior explicitly (for example `codex login status` in isolated profile returns "Not logged in"), proving binary discovery + process launch on each platform.
 - Real Codex integration tests must rely on existing local Codex CLI login/session only; do not read or require `OPENAI_API_KEY` in test setup.
