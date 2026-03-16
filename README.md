@@ -388,6 +388,83 @@ foreach (var content in response.Messages.SelectMany(m => m.Contents))
 
 See [docs/Features/meai-integration.md](https://github.com/managedcode/CodexSharpSDK/blob/main/docs/Features/meai-integration.md) and [ADR 003](https://github.com/managedcode/CodexSharpSDK/blob/main/docs/ADR/003-microsoft-extensions-ai-integration.md) for full details.
 
+## Microsoft Agent Framework Integration
+
+An optional adapter package lets you use CodexSharpSDK with Microsoft Agent Framework `AIAgent`.
+
+```bash
+dotnet add package ManagedCode.CodexSharpSDK.Extensions.AgentFramework
+```
+
+### Basic usage
+
+```csharp
+using ManagedCode.CodexSharpSDK.Extensions.AI;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+IChatClient chatClient = new CodexChatClient();
+
+AIAgent agent = chatClient.AsAIAgent(
+    name: "CodexAssistant",
+    instructions: "You are a helpful coding assistant.");
+
+AgentResponse response = await agent.RunAsync("Summarize the repository");
+Console.WriteLine(response);
+```
+
+### DI registration
+
+```csharp
+using ManagedCode.CodexSharpSDK.Extensions.AgentFramework.Extensions;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+builder.Services.AddCodexAIAgent(
+    configureAgent: options =>
+    {
+        options.Name = "CodexAssistant";
+        options.ChatOptions = new ChatOptions
+        {
+            Instructions = "You are a helpful coding assistant."
+        };
+    });
+
+app.MapGet("/agent", async (AIAgent agent) =>
+{
+    var response = await agent.RunAsync("Summarize the repository");
+    return response.ToString();
+});
+```
+
+### Keyed DI registration
+
+```csharp
+using ManagedCode.CodexSharpSDK.Extensions.AgentFramework.Extensions;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+
+var services = new ServiceCollection();
+services.AddKeyedCodexAIAgent(
+    "codex-main",
+    configureAgent: options =>
+    {
+        options.Name = "CodexAssistant";
+        options.ChatOptions = new ChatOptions
+        {
+            Instructions = "You are a helpful coding assistant."
+        };
+    });
+
+using var provider = services.BuildServiceProvider();
+var keyedAgent = provider.GetRequiredKeyedService<AIAgent>("codex-main");
+```
+
+This package builds on the existing `IChatClient` adapter, so the canonical MAF path remains `IChatClient.AsAIAgent(...)`; the new package adds a supported Codex-specific package boundary and DI convenience methods.
+
+See [docs/Features/agent-framework-integration.md](https://github.com/managedcode/CodexSharpSDK/blob/main/docs/Features/agent-framework-integration.md) and [ADR 004](https://github.com/managedcode/CodexSharpSDK/blob/main/docs/ADR/004-microsoft-agent-framework-integration.md) for full details.
+
 ## Build and Test
 
 ```bash

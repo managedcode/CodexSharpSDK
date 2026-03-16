@@ -24,8 +24,9 @@ dotnet restore ManagedCode.CodexSharpSDK.slnx
 
 - `CodexSharpSDK/CodexSharpSDK.csproj` — core `ManagedCode.CodexSharpSDK` package.
 - `CodexSharpSDK.Extensions.AI/CodexSharpSDK.Extensions.AI.csproj` — optional `IChatClient` adapter package (`ManagedCode.CodexSharpSDK.Extensions.AI`).
+- `CodexSharpSDK.Extensions.AgentFramework/CodexSharpSDK.Extensions.AgentFramework.csproj` — optional Microsoft Agent Framework adapter package (`ManagedCode.CodexSharpSDK.Extensions.AgentFramework`).
 - `CodexSharpSDK.Tests/CodexSharpSDK.Tests.csproj` — core SDK tests (TUnit).
-- `CodexSharpSDK.Extensions.AI.Tests/CodexSharpSDK.Extensions.AI.Tests.csproj` — M.E.AI adapter tests (TUnit).
+- `CodexSharpSDK.Tests/AgentFramework/*` — Microsoft Agent Framework adapter tests (TUnit, same test project).
 
 ## Local validation
 

@@ -7,8 +7,8 @@ Single source of truth: this file is navigational and coarse. Detailed behavior 
 ## Summary
 
 - **System:** .NET SDK wrapper over Codex CLI JSONL protocol.
-- **Where is the code:** core SDK in `CodexSharpSDK`; optional M.E.AI adapter in `CodexSharpSDK.Extensions.AI`; tests in `CodexSharpSDK.Tests` and `CodexSharpSDK.Extensions.AI.Tests`.
-- **Entry points:** `CodexClient`, `CodexChatClient` (`IChatClient` adapter).
+- **Where is the code:** core SDK in `CodexSharpSDK`; optional M.E.AI adapter in `CodexSharpSDK.Extensions.AI`; optional Microsoft Agent Framework adapter in `CodexSharpSDK.Extensions.AgentFramework`; tests in `CodexSharpSDK.Tests`.
+- **Entry points:** `CodexClient`, `CodexChatClient` (`IChatClient` adapter), `AddCodexAIAgent` / `AddKeyedCodexAIAgent` (`AIAgent` DI helpers).
 - **Dependencies:** local `codex` CLI process, `System.Text.Json`, .NET SDK/toolchain, GitHub Actions.
 
 ## Scoping (read first)
@@ -29,6 +29,7 @@ flowchart LR
   IO["Config & Schema IO\nTomlConfigSerializer + OutputSchemaFile"]
   META["CLI Metadata\nCodexCliMetadataReader"]
   MEAI["M.E.AI Adapter\nCodexChatClient : IChatClient"]
+  MAF["MAF Adapter\nAIAgent DI helpers"]
   TESTS["TUnit Tests"]
   CI["GitHub Actions\nCI / Release / CLI Watch"]
 
@@ -38,8 +39,10 @@ flowchart LR
   EXEC --> PARSER
   PARSER --> API
   MEAI --> API
+  MAF --> MEAI
   TESTS --> API
   TESTS --> MEAI
+  TESTS --> MAF
   TESTS --> EXEC
   CI --> TESTS
 ```
@@ -90,6 +93,7 @@ flowchart LR
 - `Config & Schema IO` — code: [TomlConfigSerializer.cs](../../CodexSharpSDK/Internal/TomlConfigSerializer.cs), [OutputSchemaFile.cs](../../CodexSharpSDK/Internal/OutputSchemaFile.cs), [CodexOptions.cs](../../CodexSharpSDK/Configuration/CodexOptions.cs)
 - `CLI Metadata` — code: [CodexCliMetadataReader.cs](../../CodexSharpSDK/Internal/CodexCliMetadataReader.cs), [CodexCliMetadata.cs](../../CodexSharpSDK/Models/CodexCliMetadata.cs); docs: [cli-metadata.md](../Features/cli-metadata.md)
 - `M.E.AI Adapter` — code: [CodexSharpSDK.Extensions.AI](../../CodexSharpSDK.Extensions.AI); docs: [meai-integration.md](../Features/meai-integration.md); ADR: [003-microsoft-extensions-ai-integration.md](../ADR/003-microsoft-extensions-ai-integration.md)
+- `MAF Adapter` — code: [CodexSharpSDK.Extensions.AgentFramework](../../CodexSharpSDK.Extensions.AgentFramework); docs: [agent-framework-integration.md](../Features/agent-framework-integration.md); ADR: [004-microsoft-agent-framework-integration.md](../ADR/004-microsoft-agent-framework-integration.md)
 - `Testing` — code: [CodexSharpSDK.Tests](../../CodexSharpSDK.Tests); docs: [strategy.md](../Testing/strategy.md)
 - `Automation` — workflows: [.github/workflows](../../.github/workflows) (including `real-integration.yml` and `codex-cli-watch.yml`); docs: [release-and-sync-automation.md](../Features/release-and-sync-automation.md)
 
@@ -110,13 +114,14 @@ flowchart LR
 ## 3) Dependency rules
 
 - Allowed dependencies:
-  - `CodexSharpSDK.Tests/*` -> `CodexSharpSDK/*`
+  - `CodexSharpSDK.Tests/*` -> `CodexSharpSDK/*`, `CodexSharpSDK.Extensions.AI/*`, `CodexSharpSDK.Extensions.AgentFramework/*`
   - `CodexSharpSDK.Extensions.AI/*` -> `CodexSharpSDK/*`
-  - `CodexSharpSDK.Extensions.AI.Tests/*` -> `CodexSharpSDK.Extensions.AI/*`, `CodexSharpSDK/*`
+  - `CodexSharpSDK.Extensions.AgentFramework/*` -> `CodexSharpSDK.Extensions.AI/*`
   - Public API (`CodexClient`, `CodexThread`) -> internal execution/parsing helpers.
 - Forbidden dependencies:
   - No dependency from `CodexSharpSDK/*` to `CodexSharpSDK.Tests/*`.
   - No dependency from `CodexSharpSDK/*` to `CodexSharpSDK.Extensions.AI/*` (adapter is opt-in).
+  - No dependency from `CodexSharpSDK/*` or `CodexSharpSDK.Extensions.AI/*` to `CodexSharpSDK.Extensions.AgentFramework/*` (MAF adapter is outermost and opt-in).
   - No runtime dependency on `submodules/openai-codex`; submodule is reference-only.
 - Integration style:
   - sync configuration + async process stream consumption (`IAsyncEnumerable<string>`)
@@ -127,6 +132,7 @@ flowchart LR
 - [001-codex-cli-wrapper.md](../ADR/001-codex-cli-wrapper.md) — wrap Codex CLI process as SDK transport.
 - [002-protocol-parsing-and-thread-serialization.md](../ADR/002-protocol-parsing-and-thread-serialization.md) — explicit protocol constants and serialized per-thread turn execution.
 - [003-microsoft-extensions-ai-integration.md](../ADR/003-microsoft-extensions-ai-integration.md) — IChatClient adapter in separate package.
+- [004-microsoft-agent-framework-integration.md](../ADR/004-microsoft-agent-framework-integration.md) — AIAgent adapter layer built on top of the IChatClient package.
 
 ## 5) Where to go next
 

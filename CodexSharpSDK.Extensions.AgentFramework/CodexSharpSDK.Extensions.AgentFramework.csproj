@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>.NET Microsoft Agent Framework adapter for CodexSharpSDK, providing AIAgent registration helpers.</Description>
+    <PackageId>ManagedCode.CodexSharpSDK.Extensions.AgentFramework</PackageId>
+    <RootNamespace>ManagedCode.CodexSharpSDK.Extensions.AgentFramework</RootNamespace>
+    <AssemblyName>ManagedCode.CodexSharpSDK.Extensions.AgentFramework</AssemblyName>
+    <PackageTags>codex;openai;sdk;ai;agent;cli;microsoft-agent-framework;aiagent</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DotNet.ReproducibleBuilds">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Agents.AI" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CodexSharpSDK.Extensions.AI\CodexSharpSDK.Extensions.AI.csproj" />
+  </ItemGroup>
+</Project>

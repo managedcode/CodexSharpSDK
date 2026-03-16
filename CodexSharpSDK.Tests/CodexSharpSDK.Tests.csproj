@@ -20,6 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\CodexSharpSDK.Extensions.AgentFramework\CodexSharpSDK.Extensions.AgentFramework.csproj" />
     <ProjectReference Include="..\CodexSharpSDK.Extensions.AI\CodexSharpSDK.Extensions.AI.csproj" />
     <ProjectReference Include="..\CodexSharpSDK\CodexSharpSDK.csproj" />
   </ItemGroup>
