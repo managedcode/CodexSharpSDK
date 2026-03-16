@@ -60,6 +60,7 @@ Enable CodexSharpSDK consumers to use Microsoft Agent Framework (`AIAgent`) on t
 4. `AddKeyedCodexAIAgent()` MUST register keyed `IChatClient` and keyed `AIAgent` using the same service key.
 5. Agent configuration supplied through `ChatClientAgentOptions` MUST flow into the created agent without mutating Codex-specific chat client defaults.
 6. Codex provider metadata exposed through `ChatClientMetadata` MUST remain available from the agent-resolved chat client.
+7. `ManagedCode.CodexSharpSDK.Extensions.AgentFramework` MUST publish as a prerelease package while its `Microsoft.Agents.AI` dependency remains prerelease, and consumer install docs MUST use prerelease-aware instructions.
 
 ---
 
@@ -181,6 +182,7 @@ flowchart LR
 ## Definition of Done
 
 - `ManagedCode.CodexSharpSDK.Extensions.AgentFramework` exists as a separate opt-in package.
+- `ManagedCode.CodexSharpSDK.Extensions.AgentFramework` uses a project-specific prerelease package version aligned to the current `Microsoft.Agents.AI` RC dependency.
 - Direct `CodexChatClient` + `AsAIAgent(...)` usage is documented in `README.md`.
 - DI helpers register non-keyed and keyed `AIAgent` instances over Codex chat clients.
 - Automated tests cover happy path and keyed-edge path registration behaviour.

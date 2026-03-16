@@ -32,6 +32,7 @@
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <EnablePackageValidation>true</EnablePackageValidation>
+    <AgentFrameworkPackageVersionSuffix>rc4</AgentFrameworkPackageVersionSuffix>
     <Version>1.1.0</Version>
     <PackageVersion>$(Version)</PackageVersion>
   </PropertyGroup>

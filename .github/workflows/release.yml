@@ -16,6 +16,7 @@ jobs:
 
     outputs:
       version: ${{ steps.version.outputs.version }}
+      agent_framework_version: ${{ steps.version.outputs.agent_framework_version }}
 
     steps:
     - name: Checkout
@@ -40,18 +41,31 @@ jobs:
       id: version
       run: |
         VERSION=$(grep -oPm1 "(?<=<Version>)[^<]+" Directory.Build.props)
+        AGENT_FRAMEWORK_SUFFIX=$(grep -oPm1 "(?<=<AgentFrameworkPackageVersionSuffix>)[^<]+" Directory.Build.props)
         if [ -z "$VERSION" ]; then
           echo "Failed to resolve package version from Directory.Build.props"
           exit 1
         fi
+        if [ -z "$AGENT_FRAMEWORK_SUFFIX" ]; then
+          echo "Failed to resolve Agent Framework package suffix from Directory.Build.props"
+          exit 1
+        fi
+        AGENT_FRAMEWORK_VERSION="$VERSION-$AGENT_FRAMEWORK_SUFFIX"
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "agent_framework_version=$AGENT_FRAMEWORK_VERSION" >> "$GITHUB_OUTPUT"
         echo "Version from Directory.Build.props: $VERSION"
+        echo "Agent Framework package version: $AGENT_FRAMEWORK_VERSION"
 
     - name: Validate semantic version
       run: |
         VERSION="${{ steps.version.outputs.version }}"
+        AGENT_FRAMEWORK_VERSION="${{ steps.version.outputs.agent_framework_version }}"
         if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
           echo "Version '$VERSION' is not a valid semantic version."
+          exit 1
+        fi
+        if [[ ! "$AGENT_FRAMEWORK_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+          echo "Agent Framework version '$AGENT_FRAMEWORK_VERSION' is not a valid semantic version."
           exit 1
         fi
 
@@ -67,8 +81,18 @@ jobs:
     - name: Codex CLI smoke tests
       run: dotnet test --project CodexSharpSDK.Tests/CodexSharpSDK.Tests.csproj --configuration Release --no-build -- --treenode-filter "/*/*/*/CodexCli_Smoke_*"
 
-    - name: Pack NuGet package
-      run: dotnet pack CodexSharpSDK/CodexSharpSDK.csproj --configuration Release --no-build -p:IncludeSymbols=false -p:SymbolPackageFormat=snupkg --output ./artifacts
+    - name: Pack NuGet packages
+      run: |
+        mkdir -p ./artifacts
+        dotnet pack CodexSharpSDK/CodexSharpSDK.csproj --configuration Release --no-build -p:IncludeSymbols=false -p:SymbolPackageFormat=snupkg --output ./artifacts
+        dotnet pack CodexSharpSDK.Extensions.AgentFramework/CodexSharpSDK.Extensions.AgentFramework.csproj --configuration Release --no-build -p:IncludeSymbols=false -p:SymbolPackageFormat=snupkg --output ./artifacts
+
+    - name: Validate packed artifacts
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        AGENT_FRAMEWORK_VERSION="${{ steps.version.outputs.agent_framework_version }}"
+        test -f "./artifacts/ManagedCode.CodexSharpSDK.$VERSION.nupkg"
+        test -f "./artifacts/ManagedCode.CodexSharpSDK.Extensions.AgentFramework.$AGENT_FRAMEWORK_VERSION.nupkg"
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -86,6 +110,7 @@ jobs:
     outputs:
       published: ${{ steps.publish.outputs.published }}
       version: ${{ needs.build.outputs.version }}
+      agent_framework_version: ${{ needs.build.outputs.agent_framework_version }}
 
     steps:
     - name: Checkout
@@ -193,6 +218,7 @@ jobs:
       id: release_notes
       run: |
         VERSION="${{ needs.publish-nuget.outputs.version }}"
+        AGENT_FRAMEWORK_VERSION="${{ needs.publish-nuget.outputs.agent_framework_version }}"
         CURRENT_TAG="v$VERSION"
         PREVIOUS_TAG="${{ steps.prev_tag.outputs.previous_tag }}"
 
@@ -229,9 +255,10 @@ jobs:
         fi
 
         echo "" >> release_notes.md
-        echo "## NuGet Package" >> release_notes.md
+        echo "## NuGet Packages" >> release_notes.md
         echo "" >> release_notes.md
         echo "- [ManagedCode.CodexSharpSDK v$VERSION](https://www.nuget.org/packages/ManagedCode.CodexSharpSDK/$VERSION)" >> release_notes.md
+        echo "- [ManagedCode.CodexSharpSDK.Extensions.AgentFramework v$AGENT_FRAMEWORK_VERSION](https://www.nuget.org/packages/ManagedCode.CodexSharpSDK.Extensions.AgentFramework/$AGENT_FRAMEWORK_VERSION)" >> release_notes.md
 
         echo "" >> release_notes.md
         echo "---" >> release_notes.md

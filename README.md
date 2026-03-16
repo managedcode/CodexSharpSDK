@@ -393,8 +393,10 @@ See [docs/Features/meai-integration.md](https://github.com/managedcode/CodexShar
 An optional adapter package lets you use CodexSharpSDK with Microsoft Agent Framework `AIAgent`.
 
 ```bash
-dotnet add package ManagedCode.CodexSharpSDK.Extensions.AgentFramework
+dotnet add package ManagedCode.CodexSharpSDK.Extensions.AgentFramework --prerelease
 ```
+
+This package currently ships as a prerelease because it depends on `Microsoft.Agents.AI` `1.0.0-rc4`.
 
 ### Basic usage
 

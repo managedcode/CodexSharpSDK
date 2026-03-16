@@ -1,9 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <Description>.NET Microsoft Agent Framework adapter for CodexSharpSDK, providing AIAgent registration helpers.</Description>
+    <PackageDescription>$(Description)</PackageDescription>
     <PackageId>ManagedCode.CodexSharpSDK.Extensions.AgentFramework</PackageId>
     <RootNamespace>ManagedCode.CodexSharpSDK.Extensions.AgentFramework</RootNamespace>
     <AssemblyName>ManagedCode.CodexSharpSDK.Extensions.AgentFramework</AssemblyName>
+    <PackageVersion>$(Version)-$(AgentFrameworkPackageVersionSuffix)</PackageVersion>
+    <Version>$(PackageVersion)</Version>
     <PackageTags>codex;openai;sdk;ai;agent;cli;microsoft-agent-framework;aiagent</PackageTags>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>

@@ -39,7 +39,8 @@ Keep package quality and upstream Codex CLI parity automatically verified throug
 - Release workflow must build/test before pack/publish.
 - Release workflow must read package version from `Directory.Build.props`.
 - Release workflow must validate semantic version format before packaging.
-- Release workflow must fail if the produced `.nupkg` version does not match `Directory.Build.props`.
+- Release workflow must fail if the produced core `.nupkg` version does not match `Directory.Build.props`.
+- Release workflow must also pack `ManagedCode.CodexSharpSDK.Extensions.AgentFramework` and use the project-specific prerelease suffix from `Directory.Build.props`.
 - Release workflow must use generated GitHub release notes.
 - Release workflow must create/push git tag `v<version>` before publishing GitHub release.
 - Codex CLI watch runs daily and opens issue when upstream `openai/codex` changed since pinned submodule SHA.
@@ -75,6 +76,7 @@ flowchart LR
 - `dotnet build ManagedCode.CodexSharpSDK.slnx -c Release -warnaserror`
 - `dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release`
 - `dotnet pack CodexSharpSDK/CodexSharpSDK.csproj -c Release --no-build -o artifacts`
+- `dotnet pack CodexSharpSDK.Extensions.AgentFramework/CodexSharpSDK.Extensions.AgentFramework.csproj -c Release --no-build -o artifacts`
 
 ### Workflow mapping
 
