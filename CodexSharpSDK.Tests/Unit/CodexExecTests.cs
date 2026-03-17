@@ -128,8 +128,8 @@ public class CodexExecTests
             Color = ExecOutputColor.Never,
             ProgressCursor = true,
             OutputLastMessageFile = "/tmp/last-message.txt",
-            EnabledFeatures = ["multi_agent", "unified_exec"],
-            DisabledFeatures = ["steer"],
+            EnabledFeatures = [CodexFeatureKeys.MultiAgent, CodexFeatureKeys.UnifiedExec],
+            DisabledFeatures = [CodexFeatureKeys.Steer],
             AdditionalCliArguments = ["--some-future-flag", "custom-value"],
         });
 
@@ -144,8 +144,8 @@ public class CodexExecTests
         await Assert.That(commandArgs.Contains("--ephemeral")).IsTrue();
         await Assert.That(commandArgs.Contains("--progress-cursor")).IsTrue();
 
-        await Assert.That(CollectFlagValues(commandArgs, "--enable")).IsEquivalentTo(["multi_agent", "unified_exec"]);
-        await Assert.That(CollectFlagValues(commandArgs, "--disable")).IsEquivalentTo(["steer"]);
+        await Assert.That(CollectFlagValues(commandArgs, "--enable")).IsEquivalentTo([CodexFeatureKeys.MultiAgent, CodexFeatureKeys.UnifiedExec]);
+        await Assert.That(CollectFlagValues(commandArgs, "--disable")).IsEquivalentTo([CodexFeatureKeys.Steer]);
 
         await Assert.That(commandArgs.Contains("--some-future-flag")).IsTrue();
         await Assert.That(commandArgs.Contains("custom-value")).IsTrue();
