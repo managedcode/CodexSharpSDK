@@ -36,7 +36,9 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Install Codex CLI
-        run: npm install --no-save @openai/codex
+        run: |
+          npm install --no-save @openai/codex
+          echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Restore
         run: dotnet restore ManagedCode.CodexSharpSDK.slnx
