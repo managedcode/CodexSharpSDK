@@ -123,12 +123,23 @@ public class ThreadEventParserTests
     }
 
     [Test]
-    public async Task Parse_ThrowsForUnsupportedEventType()
+    public async Task Parse_PreservesUnknownEventTypeAndPayload()
     {
-        var action = () => ThreadEventParser.Parse("{\"type\":\"unknown\"}");
+        var parsed = (UnknownThreadEvent)ThreadEventParser.Parse("{\"type\":\"future.event\",\"value\":42}");
 
-        var exception = await Assert.That(action).ThrowsException();
-        await Assert.That(exception!.Message).Contains("Unsupported thread event type");
+        await Assert.That(parsed.EventType).IsEqualTo("future.event");
+        await Assert.That(parsed.Payload["value"]!.GetValue<int>()).IsEqualTo(42);
+    }
+
+    [Test]
+    public async Task Parse_PreservesUnknownItemTypeAndPayload()
+    {
+        var parsed = (ItemCompletedEvent)ThreadEventParser.Parse(
+            "{\"type\":\"item.completed\",\"item\":{\"id\":\"1\",\"type\":\"future_item\",\"value\":42}}");
+        var item = (UnknownThreadItem)parsed.Item;
+
+        await Assert.That(item.ItemType).IsEqualTo("future_item");
+        await Assert.That(item.Payload["value"]!.GetValue<int>()).IsEqualTo(42);
     }
 
     [Test]

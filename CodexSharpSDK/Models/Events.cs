@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using ManagedCode.CodexSharpSDK.Internal;
 
 namespace ManagedCode.CodexSharpSDK.Models;
@@ -31,3 +32,5 @@ public sealed record ItemCompletedEvent(ThreadItem Item)
 
 public sealed record ThreadErrorEvent(string Message)
     : ThreadEvent(CodexProtocolConstants.EventTypes.Error);
+
+public sealed record UnknownThreadEvent(string EventType, JsonNode Payload) : ThreadEvent(EventType);

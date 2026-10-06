@@ -24,7 +24,7 @@ internal static class ThreadEventParser
             CodexProtocolConstants.EventTypes.ItemUpdated => new ItemUpdatedEvent(ParseItem(GetRequiredProperty(root, CodexProtocolConstants.Properties.Item))),
             CodexProtocolConstants.EventTypes.ItemCompleted => new ItemCompletedEvent(ParseItem(GetRequiredProperty(root, CodexProtocolConstants.Properties.Item))),
             CodexProtocolConstants.EventTypes.Error => new ThreadErrorEvent(GetRequiredString(root, CodexProtocolConstants.Properties.Message)),
-            _ => throw new InvalidOperationException($"Unsupported thread event type: {type}"),
+            _ => new UnknownThreadEvent(type, JsonNode.Parse(root.GetRawText())!),
         };
     }
 
@@ -89,7 +89,10 @@ internal static class ThreadEventParser
                 GetRequiredString(itemElement, CodexProtocolConstants.Properties.Id),
                 GetRequiredString(itemElement, CodexProtocolConstants.Properties.Message)),
 
-            _ => throw new InvalidOperationException($"Unsupported thread item type: {itemType}"),
+            _ => new UnknownThreadItem(
+                GetOptionalString(itemElement, CodexProtocolConstants.Properties.Id) ?? string.Empty,
+                itemType,
+                JsonNode.Parse(itemElement.GetRawText())!),
         };
     }
 

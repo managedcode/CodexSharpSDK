@@ -68,6 +68,8 @@ public sealed record CollabAgentState(CollabAgentStatus Status, string? Message)
 
 public abstract record ThreadItem(string Id, string Type);
 
+public sealed record UnknownThreadItem(string Id, string ItemType, JsonNode Payload) : ThreadItem(Id, ItemType);
+
 public sealed record AgentMessageItem(string Id, string Text)
     : ThreadItem(Id, CodexProtocolConstants.ItemTypes.AgentMessage);
 

@@ -36,6 +36,7 @@ Provide deterministic thread-based execution over Codex CLI so C# consumers can 
 - `RunAsync<TResponse>` returns `RunResult<TResponse>` with deserialized `TypedResponse`; typed runs require an output schema via either direct `outputSchema` overload parameter or `TurnOptions.OutputSchema`.
 - Typed run API supports both concise overloads (`RunAsync<TResponse>(..., outputSchema, ...)`) and full options overloads (`RunAsync<TResponse>(..., turnOptions)`); for AOT-safe typed deserialization pass `JsonTypeInfo<TResponse>`.
 - Convenience typed overloads without `JsonTypeInfo<TResponse>` are explicitly marked as AOT-unsafe with `RequiresDynamicCode` and `RequiresUnreferencedCode`.
+- Unknown event and item types are surfaced with their original JSON payload instead of terminating the stream parser, so newer Codex CLI records remain inspectable.
 - `turn.failed` must raise `ThreadRunException`.
 - Invalid JSONL event lines must fail fast with parse context.
 - Protocol tokens are parsed via constants, not inline literals.
