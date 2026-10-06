@@ -15,7 +15,13 @@ public class CodexExecTests
     private const string LongRunningCliScript = "#!/bin/sh\necho $$\nexec /bin/sleep 30\n";
     private const string DescendantHoldingStderrScript = "/usr/bin/setsid /bin/sleep 30 >&2 & echo $!; exit 0";
     private const string PosixFixtureSkipReason = "The public CLI yield-boundary fixture currently uses a POSIX executable script.";
+    private const string LinuxFixtureSkipReason = "The detached stderr-retention fixture requires Linux setsid.";
     private const string StderrClosureFailure = "stderr stream closed";
+    private const string TestInput = "test";
+    private const string CancellationScriptFileName = "codex-cancel.sh";
+    private const string MissingExecutableNamePrefix = "missing-codex-cli-";
+    private const string PosixShellPath = "/bin/sh";
+    private const string PosixShellCommandFlag = "-c";
 
     [Test]
     public async Task PublicExec_CancellationBetweenYieldedLinesIsNotReportedAsSuccess()
@@ -27,7 +33,7 @@ public class CodexExecTests
         }
 
         var sandboxDirectory = CreateSandboxDirectory();
-        var scriptPath = Path.Combine(sandboxDirectory, "codex-cancel.sh");
+        var scriptPath = Path.Combine(sandboxDirectory, CancellationScriptFileName);
         File.WriteAllText(scriptPath, LongRunningCliScript);
         File.SetUnixFileMode(scriptPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         using var cancellation = new CancellationTokenSource();
@@ -37,7 +43,7 @@ public class CodexExecTests
         {
             await using var enumerator = exec.RunAsync(new CodexExecArgs
             {
-                Input = "test",
+                Input = TestInput,
                 CancellationToken = cancellation.Token,
             }).GetAsyncEnumerator(cancellation.Token);
 
@@ -62,7 +68,7 @@ public class CodexExecTests
     public async Task PublicExec_PreCanceledTokenDoesNotStartCliProcess()
     {
         var sandboxDirectory = CreateSandboxDirectory();
-        var executablePath = Path.Combine(sandboxDirectory, $"missing-codex-cli-{Guid.NewGuid():N}");
+        var executablePath = Path.Combine(sandboxDirectory, $"{MissingExecutableNamePrefix}{Guid.NewGuid():N}");
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         using var exec = new CodexExec(TimeSpan.FromSeconds(5), executablePath, CreateProcessEnvironment());
@@ -71,7 +77,7 @@ public class CodexExecTests
         {
             await using var enumerator = exec.RunAsync(new CodexExecArgs
             {
-                Input = "test",
+                Input = TestInput,
                 CancellationToken = cancellation.Token,
             }).GetAsyncEnumerator(cancellation.Token);
 
@@ -92,13 +98,13 @@ public class CodexExecTests
     {
         if (!OperatingSystem.IsLinux())
         {
-            Skip.Test("The detached stderr-retention fixture requires Linux setsid.");
+            Skip.Test(LinuxFixtureSkipReason);
             return;
         }
 
         var invocation = new CodexProcessInvocation(
-            "/bin/sh",
-            ["-c", DescendantHoldingStderrScript],
+            PosixShellPath,
+            [PosixShellCommandFlag, DescendantHoldingStderrScript],
             CreateProcessEnvironment(),
             string.Empty)
         {
