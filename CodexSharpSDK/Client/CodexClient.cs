@@ -81,7 +81,9 @@ public sealed class CodexClient : IDisposable
             _options.CodexExecutablePath,
             _options.EnvironmentVariables,
             _options.Config,
-            _options.Logger);
+            null,
+            _options.Logger,
+            _options.ProcessTerminationTimeout);
     }
 
     private static CodexClientOptions CreateClientOptions(CodexOptions options)

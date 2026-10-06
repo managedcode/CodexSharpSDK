@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json.Nodes;
 using ManagedCode.CodexSharpSDK.Client;
 using ManagedCode.CodexSharpSDK.Execution;
@@ -11,6 +12,131 @@ namespace ManagedCode.CodexSharpSDK.Tests.Unit;
 
 public class CodexExecTests
 {
+    private const string LongRunningCliScript = "#!/bin/sh\necho $$\nexec /bin/sleep 30\n";
+    private const string DescendantHoldingStderrScript = "/usr/bin/setsid /bin/sleep 30 >&2 & echo $!; exit 0";
+    private const string PosixFixtureSkipReason = "The public CLI yield-boundary fixture currently uses a POSIX executable script.";
+    private const string StderrClosureFailure = "stderr stream closed";
+
+    [Test]
+    public async Task PublicExec_CancellationBetweenYieldedLinesIsNotReportedAsSuccess()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip.Test(PosixFixtureSkipReason);
+            return;
+        }
+
+        var sandboxDirectory = CreateSandboxDirectory();
+        var scriptPath = Path.Combine(sandboxDirectory, "codex-cancel.sh");
+        File.WriteAllText(scriptPath, LongRunningCliScript);
+        File.SetUnixFileMode(scriptPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        using var cancellation = new CancellationTokenSource();
+        using var exec = new CodexExec(TimeSpan.FromSeconds(5), scriptPath, CreateProcessEnvironment());
+
+        try
+        {
+            await using var enumerator = exec.RunAsync(new CodexExecArgs
+            {
+                Input = "test",
+                CancellationToken = cancellation.Token,
+            }).GetAsyncEnumerator(cancellation.Token);
+
+            await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            var processId = int.Parse(enumerator.Current, CultureInfo.InvariantCulture);
+            using var process = Process.GetProcessById(processId);
+            cancellation.Cancel();
+
+            var action = async () => await enumerator.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            var exception = await Assert.That(action).ThrowsException();
+
+            await Assert.That(exception).IsTypeOf<OperationCanceledException>();
+            await Assert.That(process.HasExited).IsTrue();
+        }
+        finally
+        {
+            Directory.Delete(sandboxDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task PublicExec_PreCanceledTokenDoesNotStartCliProcess()
+    {
+        var sandboxDirectory = CreateSandboxDirectory();
+        var executablePath = Path.Combine(sandboxDirectory, $"missing-codex-cli-{Guid.NewGuid():N}");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        using var exec = new CodexExec(TimeSpan.FromSeconds(5), executablePath, CreateProcessEnvironment());
+
+        try
+        {
+            await using var enumerator = exec.RunAsync(new CodexExecArgs
+            {
+                Input = "test",
+                CancellationToken = cancellation.Token,
+            }).GetAsyncEnumerator(cancellation.Token);
+
+            var action = async () => await enumerator.MoveNextAsync();
+            var exception = await Assert.That(action).ThrowsException();
+
+            await Assert.That(exception).IsTypeOf<OperationCanceledException>();
+        }
+        finally
+        {
+            // The intentionally missing executable proves cancellation is observed before process start.
+            Directory.Delete(sandboxDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task DefaultProcessRunner_RootExitWithDescendantHoldingStderr_FailsWithinConfiguredBound()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("The detached stderr-retention fixture requires Linux setsid.");
+            return;
+        }
+
+        var invocation = new CodexProcessInvocation(
+            "/bin/sh",
+            ["-c", DescendantHoldingStderrScript],
+            CreateProcessEnvironment(),
+            string.Empty)
+        {
+            ProcessTerminationTimeout = TimeSpan.FromMilliseconds(250),
+        };
+        var runner = new DefaultCodexProcessRunner();
+        await using var enumerator = runner.RunAsync(invocation, NullLogger.Instance, CancellationToken.None)
+            .GetAsyncEnumerator();
+        var childProcessId = 0;
+
+        try
+        {
+            await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            childProcessId = int.Parse(enumerator.Current, CultureInfo.InvariantCulture);
+            var stopwatch = Stopwatch.StartNew();
+            var action = async () => await enumerator.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+            var exception = await Assert.That(action).ThrowsException();
+            stopwatch.Stop();
+
+            await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+            await Assert.That(exception!.Message).Contains(StderrClosureFailure);
+            await Assert.That(stopwatch.Elapsed < TimeSpan.FromSeconds(2)).IsTrue();
+        }
+        finally
+        {
+            try
+            {
+                using var child = Process.GetProcessById(childProcessId);
+                child.Kill(entireProcessTree: true);
+                await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (ArgumentException)
+            {
+                // The detached fixture child already exited.
+            }
+        }
+    }
+
     [Test]
     public async Task BuildCommandArgs_BuildsCommandLineWithExpectedOrder()
     {
@@ -366,32 +492,34 @@ public class CodexExecTests
 
         try
         {
-            var shellScript = CreateShellScript(
-                sandboxDirectory,
-                "stderr-cancel",
-                OperatingSystem.IsWindows()
-                    ? """
-                      echo started
-                      :loop
+            var invocation = OperatingSystem.IsWindows()
+                ? new CodexProcessInvocation(
+                    "powershell.exe",
+                    ["-NoProfile", "-NonInteractive", "-Command", "[Console]::Out.WriteLine($PID); [Console]::Out.WriteLine('started'); while ($true) { [Console]::Error.WriteLine('error-line'); Start-Sleep -Milliseconds 5 }"],
+                    CreateProcessEnvironment(),
+                    string.Empty)
+                : CreateShellScript(
+                    sandboxDirectory,
+                    "stderr-cancel",
+                    """
+                    echo $$
+                    echo started
+                    while :
+                    do
                       echo error-line 1>&2
-                      goto loop
-                      """
-                    : """
-                      echo started
-                      while :
-                      do
-                        echo error-line 1>&2
-                      done
-                      """);
+                    done
+                    """).Invocation;
             var runner = new DefaultCodexProcessRunner();
             using var cancellation = new CancellationTokenSource();
 
             await using var enumerator = runner.RunAsync(
-                    shellScript.Invocation,
+                    invocation,
                     NullLogger.Instance,
                     cancellation.Token)
                 .GetAsyncEnumerator(cancellation.Token);
 
+            await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            var processId = int.Parse(enumerator.Current, System.Globalization.CultureInfo.InvariantCulture);
             await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
             await Assert.That(enumerator.Current).IsEqualTo("started");
 
@@ -400,6 +528,7 @@ public class CodexExecTests
             var action = async () => await enumerator.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             var exception = await Assert.That(action).ThrowsException();
             await Assert.That(exception).IsTypeOf<OperationCanceledException>();
+            await WaitForProcessExitAsync(processId);
         }
         finally
         {

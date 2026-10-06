@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using ManagedCode.CodexSharpSDK.Client;
+using ManagedCode.CodexSharpSDK.Configuration;
 using ManagedCode.CodexSharpSDK.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -55,6 +56,7 @@ public sealed class CodexExec : IDisposable
     private readonly JsonObject? _configOverrides;
     private readonly ICodexProcessRunner _processRunner;
     private readonly ILogger _logger;
+    private readonly TimeSpan _processTerminationTimeout;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
 
     public CodexExec(
@@ -62,7 +64,17 @@ public sealed class CodexExec : IDisposable
         IReadOnlyDictionary<string, string>? environmentOverride = null,
         JsonObject? configOverrides = null,
         ILogger? logger = null)
-        : this(executablePath, environmentOverride, configOverrides, null, logger)
+        : this(executablePath, environmentOverride, configOverrides, null, logger, CodexOptions.DefaultProcessTerminationTimeout)
+    {
+    }
+
+    public CodexExec(
+        TimeSpan processTerminationTimeout,
+        string? executablePath = null,
+        IReadOnlyDictionary<string, string>? environmentOverride = null,
+        JsonObject? configOverrides = null,
+        ILogger? logger = null)
+        : this(executablePath, environmentOverride, configOverrides, null, logger, processTerminationTimeout)
     {
     }
 
@@ -71,13 +83,19 @@ public sealed class CodexExec : IDisposable
         IReadOnlyDictionary<string, string>? environmentOverride,
         JsonObject? configOverrides,
         ICodexProcessRunner? processRunner,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        TimeSpan? processTerminationTimeout = null)
     {
         _executablePath = CodexCliLocator.FindCodexPath(executablePath);
         _environmentOverride = environmentOverride;
         _configOverrides = configOverrides;
         _processRunner = processRunner ?? new DefaultCodexProcessRunner();
         _logger = logger ?? NullLogger.Instance;
+        _processTerminationTimeout = processTerminationTimeout ?? CodexOptions.DefaultProcessTerminationTimeout;
+        if (_processTerminationTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(processTerminationTimeout));
+        }
     }
 
     public IAsyncEnumerable<string> RunAsync(CodexExecArgs args)
@@ -86,7 +104,10 @@ public sealed class CodexExec : IDisposable
 
         var commandArgs = BuildCommandArgs(args);
         var environment = BuildEnvironment(args.BaseUrl, args.ApiKey);
-        var invocation = new CodexProcessInvocation(_executablePath, commandArgs, environment, args.Input);
+        var invocation = new CodexProcessInvocation(_executablePath, commandArgs, environment, args.Input)
+        {
+            ProcessTerminationTimeout = _processTerminationTimeout,
+        };
 
         return RunWithDiagnosticsAsync(invocation, args.CancellationToken);
     }
@@ -110,6 +131,12 @@ public sealed class CodexExec : IDisposable
 
         Logging.CodexExecLog.Starting(_logger, invocation.ExecutablePath, invocation.Arguments.Count);
 
+        if (effectiveCancellationToken.IsCancellationRequested)
+        {
+            Logging.CodexExecLog.Cancelled(_logger);
+            effectiveCancellationToken.ThrowIfCancellationRequested();
+        }
+
         var lineCount = 0;
 
         IAsyncEnumerator<string> enumerator;
@@ -119,20 +146,20 @@ public sealed class CodexExec : IDisposable
                 .RunAsync(invocation, _logger, effectiveCancellationToken)
                 .GetAsyncEnumerator(effectiveCancellationToken);
         }
-        catch (OperationCanceledException exception) when (effectiveCancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (effectiveCancellationToken.IsCancellationRequested)
         {
-            Logging.CodexExecLog.Cancelled(_logger, exception);
+            Logging.CodexExecLog.Cancelled(_logger);
             throw;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            Logging.CodexExecLog.Failed(_logger, exception);
+            Logging.CodexExecLog.Failed(_logger);
             throw;
         }
 
         await using (enumerator)
         {
-            while (!effectiveCancellationToken.IsCancellationRequested)
+            while (true)
             {
                 string line;
                 try
@@ -144,14 +171,14 @@ public sealed class CodexExec : IDisposable
 
                     line = enumerator.Current;
                 }
-                catch (OperationCanceledException exception) when (effectiveCancellationToken.IsCancellationRequested)
+                catch (OperationCanceledException) when (effectiveCancellationToken.IsCancellationRequested)
                 {
-                    Logging.CodexExecLog.Cancelled(_logger, exception);
+                    Logging.CodexExecLog.Cancelled(_logger);
                     throw;
                 }
-                catch (Exception exception)
+                catch (Exception)
                 {
-                    Logging.CodexExecLog.Failed(_logger, exception);
+                    Logging.CodexExecLog.Failed(_logger);
                     throw;
                 }
 
@@ -411,7 +438,10 @@ internal sealed record CodexProcessInvocation(
     string ExecutablePath,
     IReadOnlyList<string> Arguments,
     IReadOnlyDictionary<string, string> Environment,
-    string Input);
+    string Input)
+{
+    public TimeSpan ProcessTerminationTimeout { get; init; } = CodexOptions.DefaultProcessTerminationTimeout;
+}
 
 internal interface ICodexProcessRunner
 {
@@ -423,6 +453,9 @@ internal interface ICodexProcessRunner
 
 internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
 {
+    private const string ProcessTerminationUnconfirmedMessage = "Could not confirm that the Codex CLI process exited within the configured process termination timeout.";
+    private const string StderrTerminationUnconfirmedMessage = "Could not confirm that the Codex CLI stderr stream closed within the configured process termination timeout.";
+
     public async IAsyncEnumerable<string> RunAsync(
         CodexProcessInvocation invocation,
         ILogger logger,
@@ -450,6 +483,7 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
 
         using var process = new Process { StartInfo = startInfo };
         Task<string>? standardErrorTask = null;
+        cancellationToken.ThrowIfCancellationRequested();
         try
         {
             if (!process.Start())
@@ -464,11 +498,10 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
 
         try
         {
+            standardErrorTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
             await process.StandardInput.WriteAsync(invocation.Input.AsMemory(), cancellationToken).ConfigureAwait(false);
             await process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
             process.StandardInput.Close();
-
-            standardErrorTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
 
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -481,9 +514,9 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
                 {
                     var terminatedByCancellation = await EnsureProcessExitedAfterCancellationAsync(
                         process,
-                        invocation.ExecutablePath,
+                        invocation,
                         logger).ConfigureAwait(false);
-                    var capturedStandardError = await standardErrorTask.ConfigureAwait(false);
+                    var capturedStandardError = await ReadStandardErrorAsync(standardErrorTask, invocation.ProcessTerminationTimeout).ConfigureAwait(false);
                     if (!terminatedByCancellation && process.ExitCode != 0)
                     {
                         throw new InvalidOperationException($"Codex Exec exited with code {process.ExitCode}: {capturedStandardError}");
@@ -503,7 +536,7 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
             var standardError = await CompleteProcessAsync(
                 process,
                 standardErrorTask,
-                invocation.ExecutablePath,
+                invocation,
                 logger,
                 cancellationToken).ConfigureAwait(false);
             if (process.ExitCode != 0)
@@ -513,16 +546,16 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
         }
         finally
         {
-            TryKillProcess(process, invocation.ExecutablePath, logger);
+            await EnsureProcessExitedAfterCancellationAsync(process, invocation, logger).ConfigureAwait(false);
             if (standardErrorTask is not null)
             {
                 try
                 {
-                    await standardErrorTask.ConfigureAwait(false);
+                    await ReadStandardErrorAsync(standardErrorTask, invocation.ProcessTerminationTimeout).ConfigureAwait(false);
                 }
-                catch (Exception exception)
+                catch (Exception)
                 {
-                    Logging.CodexExecLog.StandardErrorReadFailed(logger, invocation.ExecutablePath, exception);
+                    Logging.CodexExecLog.StandardErrorReadFailed(logger, invocation.ExecutablePath);
                 }
             }
         }
@@ -531,7 +564,7 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
     private static async Task<string> CompleteProcessAsync(
         Process process,
         Task<string> standardErrorTask,
-        string executablePath,
+        CodexProcessInvocation invocation,
         ILogger logger,
         CancellationToken cancellationToken)
     {
@@ -543,9 +576,9 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
         {
             var terminatedByCancellation = await EnsureProcessExitedAfterCancellationAsync(
                 process,
-                executablePath,
+                invocation,
                 logger).ConfigureAwait(false);
-            var standardError = await standardErrorTask.ConfigureAwait(false);
+            var standardError = await ReadStandardErrorAsync(standardErrorTask, invocation.ProcessTerminationTimeout).ConfigureAwait(false);
             if (!terminatedByCancellation)
             {
                 return standardError;
@@ -554,12 +587,24 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
             throw;
         }
 
-        return await standardErrorTask.ConfigureAwait(false);
+        return await ReadStandardErrorAsync(standardErrorTask, invocation.ProcessTerminationTimeout).ConfigureAwait(false);
+    }
+
+    private static async Task<string> ReadStandardErrorAsync(Task<string> standardErrorTask, TimeSpan timeout)
+    {
+        try
+        {
+            return await standardErrorTask.WaitAsync(timeout).ConfigureAwait(false);
+        }
+        catch (TimeoutException exception)
+        {
+            throw new InvalidOperationException(StderrTerminationUnconfirmedMessage, exception);
+        }
     }
 
     private static async Task<bool> EnsureProcessExitedAfterCancellationAsync(
         Process process,
-        string executablePath,
+        CodexProcessInvocation invocation,
         ILogger logger)
     {
         if (process.HasExited)
@@ -567,9 +612,20 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
             return false;
         }
 
-        TryKillProcess(process, executablePath, logger);
-        await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
-        return true;
+        TryKillProcess(process, invocation.ExecutablePath, logger);
+        try
+        {
+            await process.WaitForExitAsync(CancellationToken.None)
+                .WaitAsync(invocation.ProcessTerminationTimeout)
+                .ConfigureAwait(false);
+            return true;
+        }
+        catch (TimeoutException exception)
+        {
+            throw new InvalidOperationException(
+                ProcessTerminationUnconfirmedMessage,
+                exception);
+        }
     }
 
     private static void TryKillProcess(Process process, string executablePath, ILogger logger)
@@ -581,9 +637,9 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
                 process.Kill(entireProcessTree: true);
             }
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            Logging.CodexExecLog.ProcessKillFailed(logger, executablePath, exception);
+            Logging.CodexExecLog.ProcessKillFailed(logger, executablePath);
         }
     }
 }

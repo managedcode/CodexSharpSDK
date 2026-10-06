@@ -44,6 +44,8 @@ Provide deterministic thread-based execution over Codex CLI so C# consumers can 
 - Parser must accept `file_change` lifecycle statuses across started/completed events, including `in_progress` payloads emitted before patch application finishes.
 - Optional `ILogger` (`Microsoft.Extensions.Logging`) receives process lifecycle diagnostics (start/success/failure/cancellation).
 - `CodexClient.StopAsync()` and `Dispose()` cancel active runs bound to the current `CodexExec` instance before disconnecting client state.
+- Cancellation requests terminate the process tree and wait for the Codex CLI root process to exit and stderr to close, bounded by `CodexOptions.ProcessTerminationTimeout` (default 5 seconds). Failure to confirm either condition is a typed failure, not cancellation; a detached descendant may retain stderr, and external effects are outside this guarantee.
+- Routine SDK logs record process lifecycle and fixed failure messages only; prompts, environment values, API keys, and raw stderr remain out of telemetry. Failure details remain available on the exception returned to the caller.
 - Structured output uses typed `StructuredOutputSchema` models (including DTO property selectors) that are serialized to CLI JSON schema files.
 - `LocalImageInput` accepts image path, `FileInfo`, or `Stream`; stream inputs are materialized to temp files and cleaned after run.
 - If stream-backed local image materialization fails mid-batch, SDK still disposes owned streams and deletes temp image files already created for that batch.
