@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using ManagedCode.CodexSharpSDK.Client;
 using ManagedCode.CodexSharpSDK.Execution;
@@ -306,36 +307,42 @@ public class CodexExecTests
 
         try
         {
-            var shellScript = CreateShellScript(
-                sandboxDirectory,
-                "stderr-race",
-                OperatingSystem.IsWindows()
-                    ? """
-                      for /L %%i in (1,1,20000) do @echo error-line-%%i 1>&2
-                      echo done
-                      exit /b 23
-                      """
-                    : """
-                      i=1
-                      while [ "$i" -le 20000 ]
-                      do
-                        echo "error-line-$i" 1>&2
-                        i=$((i + 1))
-                      done
-                      echo done
-                      exit 23
-                      """);
+            var invocation = OperatingSystem.IsWindows()
+                ? new CodexProcessInvocation(
+                    "powershell.exe",
+                    [
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        "$PID; 1..20000 | ForEach-Object { [Console]::Error.WriteLine(\"error-line-$_\") }; [Console]::Out.WriteLine('done'); exit 23",
+                    ],
+                    CreateProcessEnvironment(),
+                    string.Empty)
+                : CreateShellScript(
+                    sandboxDirectory,
+                    "stderr-race",
+                    """
+                    echo $$
+                    i=1
+                    while [ "$i" -le 20000 ]
+                    do
+                      echo "error-line-$i" 1>&2
+                      i=$((i + 1))
+                    done
+                    echo done
+                    exit 23
+                    """).Invocation;
             var runner = new DefaultCodexProcessRunner();
             using var cancellation = new CancellationTokenSource();
 
             await using var enumerator = runner.RunAsync(
-                    shellScript.Invocation,
+                    invocation,
                     NullLogger.Instance,
                     cancellation.Token)
                 .GetAsyncEnumerator(cancellation.Token);
 
             await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
-            await Assert.That(enumerator.Current).IsEqualTo("done");
+            await WaitForProcessExitAsync(int.Parse(enumerator.Current, System.Globalization.CultureInfo.InvariantCulture));
 
             cancellation.Cancel();
 
@@ -405,6 +412,24 @@ public class CodexExecTests
         await foreach (var _ in lines)
         {
             // Intentionally empty.
+        }
+    }
+
+    private static async Task WaitForProcessExitAsync(int processId)
+    {
+        Process process;
+        try
+        {
+            process = Process.GetProcessById(processId);
+        }
+        catch (ArgumentException)
+        {
+            return;
+        }
+
+        using (process)
+        {
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
         }
     }
 
