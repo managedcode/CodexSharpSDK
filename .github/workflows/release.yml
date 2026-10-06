@@ -64,6 +64,14 @@ jobs:
     - name: Test (full solution)
       run: dotnet test --solution ManagedCode.CodexSharpSDK.slnx --configuration Release --no-build -- --treenode-filter "/*/*/*/*[RequiresCodexAuth!=true]"
 
+    - name: Install Native AOT prerequisites
+      run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev libssl-dev libbrotli-dev
+
+    - name: Publish and run Native AOT smoke
+      run: |
+        dotnet publish AotSmoke/ManagedCode.CodexSharpSDK.AotSmoke.csproj --configuration Release --runtime linux-x64 --output ./AotSmoke/artifacts
+        ./AotSmoke/artifacts/ManagedCode.CodexSharpSDK.AotSmoke
+
     - name: Codex CLI smoke tests
       run: dotnet test --project CodexSharpSDK.Tests/CodexSharpSDK.Tests.csproj --configuration Release --no-build -- --treenode-filter "/*/*/*/CodexCli_Smoke_*"
 
