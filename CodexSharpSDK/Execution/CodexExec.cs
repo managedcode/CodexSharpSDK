@@ -539,6 +539,7 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
         Task<string?>? standardOutputReadTask = null;
         BoundedProcessOutputReader? standardOutput = null;
         Task? standardInputWriteTask = null;
+        var standardInputWriteFailureObserved = false;
         using var outputCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var cancellationSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cancellationRegistration = cancellationToken.Register(
@@ -572,9 +573,11 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
                 invocation.MaximumProcessOutputCharacters, invocation.StandardOutputReadCompleted);
             standardOutputReadTask = standardOutput.ReadLineAsync(CancellationToken.None).AsTask();
             standardInputWriteTask = WriteStandardInputAsync(process.StandardInput, invocation.Input,
-                invocation.StandardInputWriteFailed is null
-                    ? null
-                    : () => invocation.StandardInputWriteFailed(process.HasExited),
+                () =>
+                {
+                    standardInputWriteFailureObserved = true;
+                    invocation.StandardInputWriteFailed?.Invoke(process.HasExited);
+                },
                 outputCancellation.Token);
             while (true)
             {
@@ -719,6 +722,12 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
                                           standardInputWriteTask.Exception?.GetBaseException() is IOException)
                 {
                     // The confirmed nonzero root exit owns this completed stdin broken pipe.
+                }
+                catch (IOException) when (standardInputWriteFailureObserved && process.HasExited &&
+                                          standardInputWriteTask.IsFaulted &&
+                                          standardInputWriteTask.Exception?.GetBaseException() is IOException)
+                {
+                    // This completed broken pipe was already surfaced while the root was alive.
                 }
                 catch (Exception exception)
                 {
