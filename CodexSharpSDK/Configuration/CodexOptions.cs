@@ -21,6 +21,9 @@ public sealed record CodexOptions
 
     public string? CodexExecutablePath { get; init; }
 
+    /// <summary>Uses a previously verified SDK launch descriptor, such as the result of CLI installation.</summary>
+    public ManagedCode.CodexSharpSDK.Models.CliLaunchCommand? LaunchCommand { get; init; }
+
     public string? BaseUrl { get; init; }
 
     public string? ApiKey { get; init; }
@@ -49,7 +52,8 @@ public sealed record CodexOptions
     public ManagedCode.CodexSharpSDK.Models.CliLaunchCommand GetCliLaunchCommand()
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(CliMetadataMaximumFileCharacters);
-        return CliLaunchCommandResolver.Resolve(CodexExecutablePath, GetEffectivePath(), CliMetadataMaximumFileCharacters);
+        return LaunchCommand ?? CliLaunchCommandResolver.Resolve(
+            CodexExecutablePath, GetEffectivePath(), CliMetadataMaximumFileCharacters);
     }
 
     internal string? GetEffectivePath()

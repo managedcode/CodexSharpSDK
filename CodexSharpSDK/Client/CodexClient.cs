@@ -34,6 +34,13 @@ public sealed class CodexClient : IDisposable
     /// <summary>Gets the resolved executable and literal prefix arguments for the configured Codex CLI.</summary>
     public ManagedCode.CodexSharpSDK.Models.CliLaunchCommand GetCliLaunchCommand() => _options.GetCliLaunchCommand();
 
+    /// <summary>Installs or updates Codex in its SDK-owned isolated root at the exact compatibility target.</summary>
+    public IAsyncEnumerable<ManagedCode.CodexSharpSDK.Models.CliInstallationUpdate> InstallOrUpdateCliAsync(
+        ManagedCode.CodexSharpSDK.Models.CliInstallationOptions installationOptions,
+        CancellationToken cancellationToken = default) =>
+        CodexCliInstallation.InstallOrUpdateAsync(installationOptions,
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), cancellationToken);
+
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
