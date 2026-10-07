@@ -9,6 +9,8 @@ Source of truth: local `codex` CLI + upstream npm package metadata (`@openai/cod
 
 ## Purpose
 
+The SDK package version mirrors the targeted Codex CLI version in its first three numeric components and uses the fourth component for an SDK hotfix. `CodexCliCompatibility.TargetVersion` exposes the exact compatible CLI target without starting a process. `GetCliUpdateStatus()` separately reports the latest version discovered from npm.
+
 Expose runtime Codex CLI metadata to SDK consumers:
 
 - installed `codex-cli` version

@@ -13,6 +13,15 @@ public class CodexClientTests
     private const string NpmFixtureSkipReason = "The npm shim launch fixture requires Windows and an installed Node.js runtime.";
     private const string NpmFixtureDirectoryPrefix = "CodexNpmProbe-";
     private const string NpmFixtureScriptFileName = "npm.cmd";
+
+    [Test]
+    public async Task CliCompatibilityTarget_MatchesPackageVersionPrefix()
+    {
+        var packageVersion = typeof(CodexClient).Assembly.GetName().Version;
+        await Assert.That(packageVersion).IsNotNull();
+        await Assert.That($"{packageVersion!.Major}.{packageVersion.Minor}.{packageVersion.Build}")
+            .IsEqualTo(CodexCliCompatibility.TargetVersion);
+    }
     private const string NpmFixtureArgumentsFileName = "npm-arguments.txt";
     private const string NpmFixtureVersionOutput = "99.0.0";
     private const string NpmFixtureExpectedArguments = "view @openai/codex version --silent";
