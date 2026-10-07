@@ -43,24 +43,29 @@ public class StreamingEventMapperTests
     }
 
     [Test]
-    public async Task ToUpdates_TurnFailed_DisposesSourceBeforeThrowingConfirmedFailure()
+    public async Task ToUpdates_TurnFailed_DrainsSourceBeforeThrowingConfirmedFailure()
     {
         var sourceDisposed = false;
+        var tailConsumed = false;
 
-        var exception = await Assert.That(async () => await CollectUpdates(ProviderFailureEvents(() => sourceDisposed = true)))
+        var exception = await Assert.That(async () => await CollectUpdates(
+                ProviderFailureEvents(() => tailConsumed = true, () => sourceDisposed = true)))
             .ThrowsException();
 
         await Assert.That(exception).IsTypeOf<CliExecutionFailureException>();
         await Assert.That(((CliExecutionFailureException)exception!).RootProcessExitConfirmed).IsTrue();
         await Assert.That(((CliExecutionFailureException)exception!).ExitCode).IsNull();
+        await Assert.That(tailConsumed).IsTrue();
         await Assert.That(sourceDisposed).IsTrue();
     }
 
-    private static async IAsyncEnumerable<ThreadEvent> ProviderFailureEvents(Action onDispose)
+    private static async IAsyncEnumerable<ThreadEvent> ProviderFailureEvents(Action onTailConsumed, Action onDispose)
     {
         try
         {
             yield return new TurnFailedEvent(new ThreadError("something broke"));
+            yield return new ThreadErrorEvent("late stream event");
+            onTailConsumed();
             await Task.Yield();
         }
         finally

@@ -177,7 +177,7 @@ flowchart LR
 
 ## Definition of Done
 
-Native provider failures end the mapped stream only after the upstream CLI event iterator is disposed successfully. A resulting `CliExecutionFailureException` (an `InvalidOperationException` subtype) exposes the CLI exit code when present and sets `RootProcessExitConfirmed` only after root-process exit plus natural redirected-stream EOF; this does not attest to detached descendants or external effects. If iterator cleanup is uncertain, its ordinary cleanup exception takes precedence and no confirmed-failure marker is emitted.
+Native provider failures stop producing response updates, but the adapter continues consuming and discarding later native events until the core CLI iterator completes naturally. Only then does it emit `CliExecutionFailureException` (an `InvalidOperationException` subtype), exposing the CLI exit code when present. `RootProcessExitConfirmed` means the SDK confirmed root-process exit and natural redirected-stream EOF; it does not attest to detached descendants or external effects. Cancellation or uncertain iterator cleanup propagates instead, so no confirmed-failure marker is emitted.
 
 - `CodexChatClient` implements `IChatClient` with full mapper coverage.
 - DI extensions register client correctly.
