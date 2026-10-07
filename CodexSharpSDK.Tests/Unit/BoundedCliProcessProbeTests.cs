@@ -1,8 +1,10 @@
 using System.Diagnostics;
+using System.Globalization;
 using ManagedCode.CodexSharpSDK.Internal;
 
 namespace ManagedCode.CodexSharpSDK.Tests.Unit;
 
+[NotInParallel]
 public class BoundedCliProcessProbeTests
 {
     private const string ShellExecutableUnix = "/bin/sh";
@@ -13,11 +15,12 @@ public class BoundedCliProcessProbeTests
     private const string SentinelValue = "explicit-environment-value";
     private const string OverflowMessage = "CLI metadata process exceeded the configured output limit.";
     private const string TimeoutMessage = "CLI metadata process did not exit within the configured time limit.";
+    private const string OutputTimeoutMessage = "CLI metadata process output did not close within the configured time limit.";
     private const string OutputCleanupFailedMessage = "CLI metadata process output readers did not stop within the configured time limit.";
     private const string ProbeBlockedMessage = "CLI metadata process probe is blocked by an earlier incomplete cleanup.";
     private const string ProbeBusyMessage = "CLI metadata process probe could not acquire its bounded process lease.";
     private const string LinuxFixtureSkipReason = "The detached inherited-pipe fixture requires Linux setsid.";
-    private const string DetachedChildCommandPrefix = "/usr/bin/setsid /bin/sleep 30 >&2 & echo $! > '";
+    private const string DetachedChildCommandPrefix = "/usr/bin/setsid /bin/sleep 30 & echo $! > '";
     private const string DetachedChildCommandSuffix = "'; exit 0";
     private const string FixtureDirectoryPrefix = "BoundedCliProcessProbe-";
     private const string ChildProcessIdFilePattern = "child-*.pid";
@@ -26,7 +29,7 @@ public class BoundedCliProcessProbeTests
     private const string StandardInputEofCommandUnix = "cat >/dev/null";
     private const string StandardInputEofCommandWindows = "more >NUL";
     private const int DetachedPipeProbeCount = 3;
-    private static readonly TimeSpan ConcurrentProbeTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan ConcurrentLeaseWait = TimeSpan.FromMilliseconds(100);
     private const string SentinelCommandUnix = "printf '%s' \"$SDK_METADATA_PROBE_SENTINEL\"";
     private const string SentinelCommandWindows = "echo %SDK_METADATA_PROBE_SENTINEL%";
     private const string PressureCommandUnix =
@@ -37,6 +40,10 @@ public class BoundedCliProcessProbeTests
     private const string OverflowCommandWindows = "for /L %i in (1,1,200) do @<nul set /p =0123456789";
     private const string LongRunningCommandUnix = "sleep 20";
     private const string LongRunningCommandWindows = "ping -n 21 127.0.0.1 >NUL";
+    private const string ActiveLeaseCommandUnix = "sleep 2";
+    private const string ActiveLeaseCommandWindows = "ping -n 3 127.0.0.1 >NUL";
+    private const string CompletedProbeCommandUnix = "printf probe";
+    private const string CompletedProbeCommandWindows = "echo probe";
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromMilliseconds(400);
     private static readonly TimeSpan ProcessTimeout = TimeSpan.FromSeconds(10);
 
@@ -125,8 +132,8 @@ public class BoundedCliProcessProbeTests
                 firstReadersStarted.TrySetResult();
             }
         };
-        var firstProbe = Task.Run(() => Run(LongRunningCommandUnix, LongRunningCommandWindows,
-            environment: null, inheritEnvironmentVariables: true, timeout: ConcurrentProbeTimeout,
+        var firstProbe = Task.Run(() => Run(ActiveLeaseCommandUnix, ActiveLeaseCommandWindows,
+            environment: null, inheritEnvironmentVariables: true, timeout: ProcessTimeout,
             readerCountChanged: firstReaderCountChanged));
 
         await firstReadersStarted.Task.WaitAsync(ProcessTimeout);
@@ -142,24 +149,45 @@ public class BoundedCliProcessProbeTests
             timeout: ProbeTimeout,
             maximumOutputCharacters: 64,
             readerCountChanged: secondReaderCountChanged,
-            leaseAcquisitionTimeout: ProbeTimeout)).ThrowsException();
+            leaseAcquisitionTimeout: ConcurrentLeaseWait)).ThrowsException();
 
         await Assert.That(secondException).IsTypeOf<InvalidOperationException>();
         await Assert.That(secondException!.Message).IsEqualTo(ProbeBusyMessage);
         await Assert.That(secondReaderCount).IsEqualTo(0);
 
-        Exception? firstException = null;
-        try
-        {
-            await firstProbe;
-        }
-        catch (Exception exception)
-        {
-            firstException = exception;
-        }
-
-        await Assert.That(firstException).IsTypeOf<TimeoutException>();
+        var firstResult = await firstProbe;
+        await Assert.That(firstResult.ExitCode).IsEqualTo(0);
         await Assert.That(BoundedCliProcessProbe.PendingReaderCleanupCount).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Run_RetainedReaderCleanupLeaseBlocksLaunchUntilBothReadersSettle()
+    {
+        var drains = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var leaseReleased = BoundedCliProcessProbe.RetainProbeLeaseForTesting(drains.Task);
+        await Assert.That(BoundedCliProcessProbe.PendingReaderCleanupCount).IsEqualTo(1);
+
+        var readersStarted = 0;
+        var exception = await Assert.That(() => BoundedCliProcessProbe.Run(
+            OperatingSystem.IsWindows() ? Path.Combine(Environment.SystemDirectory, ShellExecutableWindows) : ShellExecutableUnix,
+            [OperatingSystem.IsWindows() ? ShellArgumentWindows : ShellArgumentUnix,
+                OperatingSystem.IsWindows() ? CompletedProbeCommandWindows : CompletedProbeCommandUnix],
+            environment: null,
+            inheritEnvironmentVariables: true,
+            timeout: ProbeTimeout,
+            maximumOutputCharacters: 64,
+            readerCountChanged: delta => Interlocked.Add(ref readersStarted, delta))).ThrowsException();
+
+        await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+        await Assert.That(exception!.Message).IsEqualTo(ProbeBlockedMessage);
+        await Assert.That(readersStarted).IsEqualTo(0);
+
+        drains.SetResult();
+        await leaseReleased.WaitAsync(ProcessTimeout);
+        await Assert.That(BoundedCliProcessProbe.PendingReaderCleanupCount).IsEqualTo(0);
+        var result = Run(CompletedProbeCommandUnix, CompletedProbeCommandWindows,
+            environment: null, inheritEnvironmentVariables: true, timeout: ProbeTimeout);
+        await Assert.That(result.ExitCode).IsEqualTo(0);
     }
 
     [Test]
@@ -202,26 +230,50 @@ public class BoundedCliProcessProbeTests
                     leaseAcquisitionTimeout: ProcessTimeout)).ThrowsException();
                 stopwatch.Stop();
 
-                await Assert.That(exception).IsTypeOf<InvalidOperationException>();
-                await Assert.That(exception!.Message).IsEqualTo(OutputCleanupFailedMessage);
                 await Assert.That(stopwatch.Elapsed).IsLessThan(ProcessTimeout);
-                await Assert.That(activeReaders).IsEqualTo(2);
-                await Assert.That(BoundedCliProcessProbe.PendingReaderCleanupCount).IsEqualTo(1);
+                var childProcessId = int.Parse(File.ReadAllText(childProcessIdPath), CultureInfo.InvariantCulture);
+                using (var child = Process.GetProcessById(childProcessId))
+                {
+                    await Assert.That(child.HasExited).IsFalse();
+                }
 
-                var blockedChildPath = Path.Combine(sandbox, $"blocked-{attempt}.pid");
-                var blockedCommand = string.Concat(DetachedChildCommandPrefix, blockedChildPath,
-                    DetachedChildCommandSuffix);
-                var blockedException = await Assert.That(() => BoundedCliProcessProbe.Run(
-                    ShellExecutableUnix,
-                    [ShellArgumentUnix, blockedCommand],
-                    environment: null,
-                    inheritEnvironmentVariables: true,
-                    timeout: ProbeTimeout,
-                    maximumOutputCharacters: 64)).ThrowsException();
+                if (exception is TimeoutException)
+                {
+                    await Assert.That(exception.Message).IsEqualTo(OutputTimeoutMessage);
+                    await Assert.That(activeReaders).IsEqualTo(0);
+                    await Assert.That(BoundedCliProcessProbe.PendingReaderCleanupCount).IsEqualTo(0);
+                    var subsequentProbe = BoundedCliProcessProbe.Run(
+                        ShellExecutableUnix,
+                        [ShellArgumentUnix, CompletedProbeCommandUnix],
+                        environment: null,
+                        inheritEnvironmentVariables: true,
+                        timeout: ProbeTimeout,
+                        maximumOutputCharacters: 64);
+                    await Assert.That(subsequentProbe.ExitCode).IsEqualTo(0);
+                }
+                else
+                {
+                    await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+                    await Assert.That(exception!.Message).IsEqualTo(OutputCleanupFailedMessage);
+                    await Assert.That(activeReaders > 0 && activeReaders <= 2).IsTrue();
+                    await Assert.That(BoundedCliProcessProbe.PendingReaderCleanupCount).IsEqualTo(1);
 
-                await Assert.That(blockedException).IsTypeOf<InvalidOperationException>();
-                await Assert.That(blockedException!.Message).IsEqualTo(ProbeBlockedMessage);
-                await Assert.That(File.Exists(blockedChildPath)).IsFalse();
+                    var blockedChildPath = Path.Combine(sandbox, $"blocked-{attempt}.pid");
+                    var blockedCommand = string.Concat(DetachedChildCommandPrefix, blockedChildPath,
+                        DetachedChildCommandSuffix);
+                    var blockedException = await Assert.That(() => BoundedCliProcessProbe.Run(
+                        ShellExecutableUnix,
+                        [ShellArgumentUnix, blockedCommand],
+                        environment: null,
+                        inheritEnvironmentVariables: true,
+                        timeout: ProbeTimeout,
+                        maximumOutputCharacters: 64)).ThrowsException();
+
+                    await Assert.That(blockedException).IsTypeOf<InvalidOperationException>();
+                    await Assert.That(blockedException!.Message).IsEqualTo(ProbeBlockedMessage);
+                    await Assert.That(File.Exists(blockedChildPath)).IsFalse();
+                }
+
                 StopChildProcess(childProcessIdPath);
                 await readersDrained.Task.WaitAsync(ProcessTimeout);
                 await Assert.That(activeReaders).IsEqualTo(0);

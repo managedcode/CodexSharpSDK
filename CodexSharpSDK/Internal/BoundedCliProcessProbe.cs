@@ -30,6 +30,14 @@ internal static class BoundedCliProcessProbe
         }
     }
 
+    internal static Task RetainProbeLeaseForTesting(Task drains)
+    {
+        ArgumentNullException.ThrowIfNull(drains);
+        var probeGateLease = ProbeGateLease.Acquire(1);
+        probeGateLease.ReleaseWhenDrained(drains);
+        return probeGateLease.ReleaseCompletion;
+    }
+
     public static CliProcessProbeResult Run(
         string executablePath,
         IReadOnlyList<string> arguments,
@@ -312,6 +320,9 @@ internal static class BoundedCliProcessProbe
     private sealed class ProbeGateLease : IDisposable
     {
         private bool _retainedForCleanup;
+        private readonly TaskCompletionSource _releaseCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task ReleaseCompletion => _releaseCompletion.Task;
 
         public static ProbeGateLease Acquire(int leaseTimeoutMilliseconds)
         {
@@ -349,10 +360,11 @@ internal static class BoundedCliProcessProbe
             }
 
             _ = drains.ContinueWith(
-                static task =>
+                task =>
                 {
                     _ = task.Exception;
                     ReleaseProbeLease(retainedCleanup: true);
+                    _releaseCompletion.TrySetResult();
                 },
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
