@@ -9,6 +9,8 @@ public sealed record CodexOptions
 
     public static TimeSpan DefaultCliMetadataProbeTimeout { get; } = TimeSpan.FromSeconds(10);
 
+    public static TimeSpan DefaultCliMetadataProbeLeaseTimeout { get; } = TimeSpan.FromMinutes(2);
+
     public const int DefaultCliMetadataMaximumOutputCharacters = 65536;
 
     public const int DefaultCliMetadataMaximumFileCharacters = 1048576;
@@ -28,6 +30,8 @@ public sealed record CodexOptions
     public bool? InheritEnvironmentVariables { get; init; }
 
     public TimeSpan CliMetadataProbeTimeout { get; init; } = DefaultCliMetadataProbeTimeout;
+
+    public TimeSpan CliMetadataProbeLeaseTimeout { get; init; } = DefaultCliMetadataProbeLeaseTimeout;
 
     public int CliMetadataMaximumOutputCharacters { get; init; } = DefaultCliMetadataMaximumOutputCharacters;
 

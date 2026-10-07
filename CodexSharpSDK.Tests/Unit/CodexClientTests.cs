@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using ManagedCode.CodexSharpSDK.Client;
 using ManagedCode.CodexSharpSDK.Configuration;
 using ManagedCode.CodexSharpSDK.Execution;
@@ -25,6 +26,11 @@ public class CodexClientTests
     private const string DotCodexDirectoryName = ".codex";
     private const string CodexConfigFileName = "config.toml";
     private const string CodexModelsCacheFileName = "models_cache.json";
+    private const string MetadataLeaseScriptFileName = "codex-metadata-lease.sh";
+    private const string MetadataLeaseMarkerFileName = "metadata-lease-starts.txt";
+    private const string MetadataLeaseProbeCommandTemplate = "#!/bin/sh\nprintf 'started\\n' >> '{0}'\nsleep 2\nprintf 'codex 0.0.1\\n'\n";
+    private const string MetadataLeaseProbePathPlaceholder = "{0}";
+    private const string ProbeLeaseBusyMessage = "CLI metadata process probe could not acquire its bounded process lease.";
     private const int SmallMetadataFileLimit = 256;
     private const string MetadataFileLimitMessage = "CLI metadata file exceeded the configured character limit.";
     private const string CodexConfigFixture = "model = \"" + CodexModels.Gpt53Codex + "\"";
@@ -351,6 +357,84 @@ public class CodexClientTests
         finally
         {
             Directory.Delete(home, recursive: true);
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task CodexCli_MetadataLeaseTimeoutIsIndependentAndPreventsSecondProbeStart()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip.Test("The metadata lease fixture uses a POSIX executable script.");
+            return;
+        }
+
+        var sandbox = CreateMetadataSandbox();
+        var markerPath = Path.Combine(sandbox, MetadataLeaseMarkerFileName);
+        var executablePath = Path.Combine(sandbox, MetadataLeaseScriptFileName);
+        File.WriteAllText(executablePath, MetadataLeaseProbeCommandTemplate.Replace(
+            MetadataLeaseProbePathPlaceholder,
+            markerPath,
+            StringComparison.Ordinal));
+        File.SetUnixFileMode(executablePath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var environment = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [PathEnvironmentVariable] = Environment.GetEnvironmentVariable(PathEnvironmentVariable) ?? string.Empty,
+        };
+        using var firstClient = new CodexClient(new CodexOptions
+        {
+            CodexExecutablePath = executablePath,
+            EnvironmentVariables = environment,
+            InheritEnvironmentVariables = false,
+            CliMetadataProbeTimeout = TimeSpan.FromSeconds(5),
+            CliMetadataProbeLeaseTimeout = TimeSpan.FromSeconds(5),
+        });
+        using var secondClient = new CodexClient(new CodexOptions
+        {
+            CodexExecutablePath = executablePath,
+            EnvironmentVariables = environment,
+            InheritEnvironmentVariables = false,
+            CliMetadataProbeTimeout = TimeSpan.FromSeconds(5),
+            CliMetadataProbeLeaseTimeout = TimeSpan.FromMilliseconds(100),
+        });
+
+        try
+        {
+            var firstProbe = Task.Run(firstClient.GetCliMetadata);
+            var started = Stopwatch.StartNew();
+            while (!File.Exists(markerPath) && started.Elapsed < TimeSpan.FromSeconds(3))
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(10));
+            }
+
+            await Assert.That(File.Exists(markerPath)).IsTrue();
+            var secondProbe = () => secondClient.GetCliMetadata();
+            var exception = await Assert.That(secondProbe).ThrowsException();
+
+            await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+            await Assert.That(exception!.Message).IsEqualTo(ProbeLeaseBusyMessage);
+            await Assert.That(started.Elapsed).IsLessThan(TimeSpan.FromSeconds(2));
+            var result = await firstProbe.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(result.InstalledVersion).IsEqualTo("codex 0.0.1");
+            await Assert.That(File.ReadAllLines(markerPath)).Count().IsEqualTo(1);
+        }
+        finally
+        {
+            Directory.Delete(sandbox, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task CodexCli_GetCliMetadataRejectsNonPositiveProbeLeaseTimeout()
+    {
+        foreach (var timeout in new[] { TimeSpan.Zero, TimeSpan.FromMilliseconds(-1) })
+        {
+            using var client = new CodexClient(new CodexOptions { CliMetadataProbeLeaseTimeout = timeout });
+            var action = () => client.GetCliMetadata();
+            var exception = await Assert.That(action).ThrowsException();
+
+            await Assert.That(exception).IsTypeOf<ArgumentOutOfRangeException>();
         }
     }
 

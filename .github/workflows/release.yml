@@ -35,7 +35,7 @@ jobs:
         fi
 
         while (( SECONDS < deadline )); do
-          run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs" \
+          run=$(gh api --method GET "repos/${GITHUB_REPOSITORY}/actions/runs" \
             -f head_sha="$GITHUB_SHA" \
             -F per_page=100 \
             --jq "[.workflow_runs[] | select(.workflow_id == $ci_workflow_id and .head_sha == \"$GITHUB_SHA\" and .head_branch == \"main\" and .event == \"push\")] | sort_by(.created_at) | last // empty")

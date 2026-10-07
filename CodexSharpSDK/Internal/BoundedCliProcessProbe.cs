@@ -327,7 +327,7 @@ internal static class BoundedCliProcessProbe
         public static ProbeGateLease Acquire(int leaseTimeoutMilliseconds)
         {
             var stopwatch = Stopwatch.StartNew();
-            var waitMilliseconds = Math.Min((long)leaseTimeoutMilliseconds * 2, int.MaxValue);
+            var waitMilliseconds = leaseTimeoutMilliseconds;
             lock (ProbeGateLock)
             {
                 while (ProbeLeaseHeld)

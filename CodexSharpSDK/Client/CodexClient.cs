@@ -62,22 +62,25 @@ public sealed class CodexClient : IDisposable
     public CodexCliMetadata GetCliMetadata()
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.CliMetadataMaximumFileCharacters);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_options.CliMetadataProbeLeaseTimeout, TimeSpan.Zero);
         var executablePath = CodexCliLocator.FindCodexPath(_options.CodexExecutablePath);
         using var exec = CreateExec();
         return CodexCliMetadataReader.Read(executablePath, exec.BuildEnvironment(_options.BaseUrl, _options.ApiKey),
             _options.InheritEnvironmentVariables ?? _options.EnvironmentVariables is null,
             _options.CliMetadataProbeTimeout, _options.CliMetadataMaximumOutputCharacters,
-            _options.CliMetadataMaximumFileCharacters);
+            _options.CliMetadataMaximumFileCharacters, _options.CliMetadataProbeLeaseTimeout);
     }
 
     public CodexCliUpdateStatus GetCliUpdateStatus()
     {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_options.CliMetadataProbeLeaseTimeout, TimeSpan.Zero);
         var executablePath = CodexCliLocator.FindCodexPath(_options.CodexExecutablePath);
         using var exec = CreateExec();
         return CodexCliMetadataReader.ReadUpdateStatus(executablePath,
             exec.BuildEnvironment(_options.BaseUrl, _options.ApiKey),
             _options.InheritEnvironmentVariables ?? _options.EnvironmentVariables is null,
-            _options.CliMetadataProbeTimeout, _options.CliMetadataMaximumOutputCharacters);
+            _options.CliMetadataProbeTimeout, _options.CliMetadataMaximumOutputCharacters,
+            _options.CliMetadataProbeLeaseTimeout);
     }
 
     public void Dispose() => _connectionState.Dispose();

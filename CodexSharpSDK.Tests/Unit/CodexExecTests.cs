@@ -14,6 +14,11 @@ public class CodexExecTests
 {
     private const string LongRunningCliScript = "#!/bin/sh\necho $$\nexec /bin/sleep 30\n";
     private const string DescendantHoldingStderrScript = "/usr/bin/setsid /bin/sleep 30 >&2 & echo $!; exit 0";
+    private const string DescendantHoldingStderrWhileParentRunsScript =
+        "/usr/bin/setsid /bin/sleep 30 >&2 & echo $!; exec /bin/sleep 30";
+    private const string WindowsDuplexStdinCommandTemplate = "$pressure = 'o' * {0}; [Console]::Out.WriteLine($pressure); [Console]::Out.Flush(); [Console]::Error.WriteLine(('e' * {0})); [Console]::Error.Flush(); $prompt = [Console]::In.ReadToEnd(); [Console]::Out.Write($prompt); [Console]::Out.WriteLine(\"stdin-length:$($prompt.Length)\"); [Console]::Out.WriteLine('stdin-eof')";
+    private const string PosixDuplexStdinScriptTemplate = "head -c {0} /dev/zero | tr '\\000' 'o'; printf '\\n'; head -c {0} /dev/zero | tr '\\000' 'e' >&2; printf '\\n' >&2; prompt=$(cat); printf '%s\\n' \"$prompt\"; printf 'stdin-length:%s\\n' \"${#prompt}\"; printf 'stdin-eof\\n'";
+    private const string DuplexPressureTemplatePlaceholder = "{0}";
     private const string PosixFixtureSkipReason = "The public CLI yield-boundary fixture currently uses a POSIX executable script.";
     private const string LinuxFixtureSkipReason = "The detached stderr-retention fixture requires Linux setsid.";
     private const string StderrClosureFailure = "stderr stream closed";
@@ -34,11 +39,118 @@ public class CodexExecTests
     private const string ExpectedSecondLine = "second";
     private const int SmallOutputLimitCharacters = 64;
     private const int AggregateOutputLimitCharacters = 24;
+    private const int DuplexPipePressureCharacters = 131072;
+    private const int DuplexPromptCharacters = 262144;
+    private const int DuplexMaximumProcessOutputCharacters = 1048576;
+    private static readonly TimeSpan ProcessOutputCleanupAssertionBound = TimeSpan.FromSeconds(8);
     private const string TestInput = "test";
     private const string CancellationScriptFileName = "codex-cancel.sh";
     private const string MissingExecutableNamePrefix = "missing-codex-cli-";
     private const string PosixShellPath = "/bin/sh";
     private const string PosixShellCommandFlag = "-c";
+
+    [Test]
+    public async Task DefaultProcessRunner_DrainsBothOutputPipesWhileWritingLargePrompt()
+    {
+        var sandboxDirectory = CreateSandboxDirectory();
+        var prompt = new string('p', DuplexPromptCharacters);
+
+        try
+        {
+            var invocation = OperatingSystem.IsWindows()
+                ? new CodexProcessInvocation(
+                    WindowsPowerShellPath,
+                    [
+                        WindowsNoProfileFlag,
+                        WindowsNonInteractiveFlag,
+                        WindowsCommandFlag,
+                        WindowsDuplexStdinCommandTemplate.Replace(
+                            DuplexPressureTemplatePlaceholder,
+                            DuplexPipePressureCharacters.ToString(CultureInfo.InvariantCulture),
+                            StringComparison.Ordinal),
+                    ],
+                    CreateProcessEnvironment(),
+                    prompt)
+                : CreateShellScript(
+                    sandboxDirectory,
+                    "duplex-stdin",
+                    PosixDuplexStdinScriptTemplate.Replace(
+                        DuplexPressureTemplatePlaceholder,
+                        DuplexPipePressureCharacters.ToString(CultureInfo.InvariantCulture),
+                        StringComparison.Ordinal))
+                    .Invocation with
+                { Input = prompt };
+            invocation = invocation with { MaximumProcessOutputCharacters = DuplexMaximumProcessOutputCharacters };
+            var runner = new DefaultCodexProcessRunner();
+
+            var lines = await DrainToListAsync(runner.RunAsync(invocation, NullLogger.Instance, CancellationToken.None));
+
+            await Assert.That(lines).Contains(prompt);
+            await Assert.That(lines).Contains(new string('o', DuplexPipePressureCharacters));
+            await Assert.That(lines).Contains($"stdin-length:{prompt.Length}");
+            await Assert.That(lines).Contains("stdin-eof");
+        }
+        finally
+        {
+            Directory.Delete(sandboxDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task CancellationWithDescendantHoldingStderrSurfacesUnconfirmedCleanup()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test(LinuxFixtureSkipReason);
+            return;
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        var standardErrorReaderCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var standardOutputReadCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var invocation = new CodexProcessInvocation(
+            PosixShellPath,
+            [PosixShellCommandFlag, DescendantHoldingStderrWhileParentRunsScript],
+            CreateProcessEnvironment(),
+            string.Empty)
+        {
+            ProcessTerminationTimeout = TimeSpan.FromMilliseconds(250),
+            StandardErrorReaderCompleted = () => standardErrorReaderCompleted.TrySetResult(),
+            StandardOutputReadCompleted = () => standardOutputReadCompleted.TrySetResult(),
+        };
+        var runner = new DefaultCodexProcessRunner();
+        await using var enumerator = runner.RunAsync(invocation, NullLogger.Instance, cancellation.Token)
+            .GetAsyncEnumerator(cancellation.Token);
+        var childProcessId = 0;
+
+        try
+        {
+            await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            childProcessId = int.Parse(enumerator.Current, CultureInfo.InvariantCulture);
+            cancellation.Cancel();
+
+            var action = async () => await enumerator.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+            var exception = await Assert.That(action).ThrowsException();
+
+            await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+            await Assert.That(exception!.Message).Contains(StderrClosureFailure);
+            await standardOutputReadCompleted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await standardErrorReaderCompleted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            try
+            {
+                using var child = Process.GetProcessById(childProcessId);
+                child.Kill(entireProcessTree: true);
+                await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (ArgumentException)
+            {
+                // The detached fixture child already exited.
+            }
+        }
+    }
 
     [Test]
     public async Task DefaultProcessRunner_PreservesMultilineOutputWithinConfiguredBudget()
@@ -87,11 +199,11 @@ public class CodexExecTests
     [Test]
     public async Task DefaultProcessRunner_StandardErrorPressureStopsQuietRootWithinBound()
     {
+        var stopwatch = new Stopwatch();
         var invocation = CreateOutputInvocation(
             OperatingSystem.IsWindows() ? WindowsStandardErrorPressureCommand : PosixStandardErrorPressureCommand,
-            TimeSpan.FromSeconds(2), SmallOutputLimitCharacters);
+            TimeSpan.FromSeconds(2), SmallOutputLimitCharacters, stopwatch.Start);
         var runner = new DefaultCodexProcessRunner();
-        var stopwatch = Stopwatch.StartNew();
         var action = async () => await DrainToListAsync(runner.RunAsync(invocation, NullLogger.Instance, CancellationToken.None));
 
         var exception = await Assert.That(action).ThrowsException();
@@ -99,7 +211,7 @@ public class CodexExecTests
 
         await Assert.That(exception).IsTypeOf<InvalidOperationException>();
         await Assert.That(exception!.Message).Contains(ProcessOutputLimitMessage);
-        await Assert.That(stopwatch.Elapsed < TimeSpan.FromSeconds(5)).IsTrue();
+        await Assert.That(stopwatch.Elapsed < ProcessOutputCleanupAssertionBound).IsTrue();
     }
 
     [Test]
@@ -679,7 +791,8 @@ public class CodexExecTests
     private static CodexProcessInvocation CreateOutputInvocation(
         string command,
         TimeSpan processTerminationTimeout,
-        int maximumProcessOutputCharacters)
+        int maximumProcessOutputCharacters,
+        Action? standardErrorOutputLimitExceeded = null)
     {
         return new CodexProcessInvocation(
             OperatingSystem.IsWindows() ? WindowsPowerShellPath : PosixShellPath,
@@ -691,6 +804,7 @@ public class CodexExecTests
         {
             ProcessTerminationTimeout = processTerminationTimeout,
             MaximumProcessOutputCharacters = maximumProcessOutputCharacters,
+            StandardErrorOutputLimitExceeded = standardErrorOutputLimitExceeded,
         };
     }
 

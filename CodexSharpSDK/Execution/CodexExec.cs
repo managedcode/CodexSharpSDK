@@ -456,6 +456,7 @@ internal sealed record CodexProcessInvocation(
     public int MaximumProcessOutputCharacters { get; init; } = CodexOptions.DefaultMaximumProcessOutputCharacters;
     public Action? StandardErrorReaderCompleted { get; init; }
     public Action? StandardOutputReadCompleted { get; init; }
+    public Action? StandardErrorOutputLimitExceeded { get; init; }
 }
 
 internal interface ICodexProcessRunner
@@ -503,6 +504,7 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
         using var process = new Process { StartInfo = startInfo };
         Task<BoundedProcessOutput>? standardErrorTask = null;
         Task<string?>? standardOutputReadTask = null;
+        Task? standardInputWriteTask = null;
         using var outputCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var standardErrorLimitExceeded = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         Exception? cleanupFailure = null;
@@ -525,20 +527,20 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
                 invocation.MaximumProcessOutputCharacters, () =>
                 {
                     standardErrorLimitExceeded.TrySetResult(true);
+                    invocation.StandardErrorOutputLimitExceeded?.Invoke();
                     TryKillProcess(process, invocation.ExecutablePath, logger);
                     outputCancellation.Cancel();
                 }, outputCancellation.Token, invocation.StandardErrorReaderCompleted);
-            await process.StandardInput.WriteAsync(invocation.Input.AsMemory(), cancellationToken).ConfigureAwait(false);
-            await process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
-            process.StandardInput.Close();
-
             var standardOutput = new BoundedProcessOutputReader(process.StandardOutput,
                 invocation.MaximumProcessOutputCharacters, invocation.StandardOutputReadCompleted);
+            standardOutputReadTask = standardOutput.ReadLineAsync(outputCancellation.Token).AsTask();
+            standardInputWriteTask = WriteStandardInputAsync(process.StandardInput, invocation.Input, outputCancellation.Token);
             while (true)
             {
-                var readLineTask = standardOutput.ReadLineAsync(outputCancellation.Token).AsTask();
-                standardOutputReadTask = readLineTask;
-                var completedTask = await Task.WhenAny(readLineTask, standardErrorLimitExceeded.Task).ConfigureAwait(false);
+                var readLineTask = standardOutputReadTask!;
+                var completedTask = standardInputWriteTask is null
+                    ? await Task.WhenAny(readLineTask, standardErrorLimitExceeded.Task).ConfigureAwait(false)
+                    : await Task.WhenAny(readLineTask, standardErrorLimitExceeded.Task, standardInputWriteTask).ConfigureAwait(false);
                 if (completedTask == standardErrorLimitExceeded.Task || standardErrorLimitExceeded.Task.IsCompleted)
                 {
                     try
@@ -556,6 +558,14 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
 
                     await EnsureProcessExitedAfterCancellationAsync(process, invocation, logger).ConfigureAwait(false);
                     throw new InvalidOperationException(ProcessOutputLimitExceededMessage);
+                }
+
+                if (standardInputWriteTask is not null && completedTask == standardInputWriteTask)
+                {
+                    await AwaitStandardInputWriteAsync(standardInputWriteTask, process, standardErrorTask!,
+                        invocation, logger, cancellationToken).ConfigureAwait(false);
+                    standardInputWriteTask = null;
+                    continue;
                 }
 
                 string? line;
@@ -582,10 +592,17 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
                 standardOutputReadTask = null;
                 if (line is null)
                 {
+                    if (standardInputWriteTask is not null)
+                    {
+                        await AwaitStandardInputWriteAsync(standardInputWriteTask, process, standardErrorTask!,
+                            invocation, logger, cancellationToken).ConfigureAwait(false);
+                        standardInputWriteTask = null;
+                    }
                     break;
                 }
 
                 yield return line;
+                standardOutputReadTask = standardOutput.ReadLineAsync(outputCancellation.Token).AsTask();
             }
 
             var standardError = await CompleteProcessAsync(
@@ -611,11 +628,69 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
                 processExitFailure = exception;
             }
 
-            outputCancellation.Cancel();
-            process.StandardOutput.Dispose();
-            process.StandardError.Dispose();
+            var readerFailures = new List<Exception>(4);
+            try
+            {
+                process.StandardInput.BaseStream.Dispose();
+            }
+            catch (Exception exception)
+            {
+                readerFailures.Add(exception);
+            }
+
+            if (standardInputWriteTask is not null)
+            {
+                try
+                {
+                    await standardInputWriteTask.WaitAsync(invocation.ProcessTerminationTimeout, CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (outputCancellation.IsCancellationRequested && standardInputWriteTask.IsCanceled)
+                {
+                    // Owned I/O cancellation ends the stdin pump after root termination was requested.
+                }
+                catch (IOException) when (standardErrorLimitExceeded.Task.IsCompleted &&
+                                          standardInputWriteTask.IsFaulted &&
+                                          standardInputWriteTask.Exception?.GetBaseException() is IOException)
+                {
+                    // The visible stderr output-limit failure owns this induced broken pipe.
+                }
+                catch (Exception exception)
+                {
+                    readerFailures.Add(exception);
+                }
+            }
+            try
+            {
+                outputCancellation.Cancel();
+            }
+            catch (Exception exception)
+            {
+                readerFailures.Add(exception);
+            }
+
+            try
+            {
+                process.StandardOutput.Dispose();
+            }
+            catch (Exception exception)
+            {
+                readerFailures.Add(exception);
+            }
+
+            try
+            {
+                process.StandardError.Dispose();
+            }
+            catch (Exception exception)
+            {
+                readerFailures.Add(exception);
+            }
             var standardOutputFailure = await ObserveStandardOutputReadAsync(
                 standardOutputReadTask, invocation.ProcessTerminationTimeout).ConfigureAwait(false);
+            var standardOutputLimitFailureIsExpected = standardOutputReadTask is { IsFaulted: true } &&
+                standardOutputReadTask.Exception?.GetBaseException() is InvalidOperationException standardOutputLimitException &&
+                string.Equals(standardOutputLimitException.Message, ProcessOutputLimitExceededMessage, StringComparison.Ordinal);
             Exception? standardErrorFailure = null;
             if (standardErrorTask is not null)
             {
@@ -630,13 +705,15 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
                 }
             }
 
-            var readerFailures = new List<Exception>(2);
-            if (standardOutputFailure is not null)
+            if (standardOutputFailure is not null && !standardOutputLimitFailureIsExpected)
             {
                 readerFailures.Add(standardOutputFailure);
             }
 
-            if (standardErrorFailure is not null)
+            var standardErrorLimitFailureIsExpected = standardErrorTask is { IsFaulted: true } &&
+                standardErrorTask.Exception?.GetBaseException() is InvalidOperationException standardErrorLimitException &&
+                string.Equals(standardErrorLimitException.Message, ProcessOutputLimitExceededMessage, StringComparison.Ordinal);
+            if (standardErrorFailure is not null && !standardErrorLimitFailureIsExpected)
             {
                 readerFailures.Add(standardErrorFailure);
             }
@@ -661,11 +738,11 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
                     ProcessAndReaderCleanupUnconfirmedMessage,
                     new AggregateException(readerFailures));
             }
-        }
 
-        if (cleanupFailure is not null)
-        {
-            ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
+            if (cleanupFailure is not null)
+            {
+                ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
+            }
         }
     }
 
@@ -775,6 +852,57 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
         }
 
         return new BoundedProcessOutput(output.ToString());
+    }
+
+    private static async Task WriteStandardInputAsync(
+        StreamWriter standardInput,
+        string input,
+        CancellationToken cancellationToken)
+    {
+        await standardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false);
+        await standardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await standardInput.DisposeAsync().ConfigureAwait(false);
+    }
+
+    private static async Task AwaitStandardInputWriteAsync(
+        Task standardInputWriteTask,
+        Process process,
+        Task<BoundedProcessOutput> standardErrorTask,
+        CodexProcessInvocation invocation,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await standardInputWriteTask.WaitAsync(invocation.ProcessTerminationTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            var terminatedByCancellation = await EnsureProcessExitedAfterCancellationAsync(process, invocation, logger)
+                .ConfigureAwait(false);
+            var capturedStandardError = await ReadStandardErrorAsync(standardErrorTask, invocation.ProcessTerminationTimeout)
+                .ConfigureAwait(false);
+            if (!terminatedByCancellation && process.HasExited && process.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"Codex Exec exited with code {process.ExitCode}: {capturedStandardError.Text}");
+            }
+
+            throw;
+        }
+        catch (Exception) when (process.HasExited)
+        {
+            await process.WaitForExitAsync(CancellationToken.None)
+                .WaitAsync(invocation.ProcessTerminationTimeout, CancellationToken.None)
+                .ConfigureAwait(false);
+            var capturedStandardError = await ReadStandardErrorAsync(standardErrorTask, invocation.ProcessTerminationTimeout)
+                .ConfigureAwait(false);
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"Codex Exec exited with code {process.ExitCode}: {capturedStandardError.Text}");
+            }
+
+            throw;
+        }
     }
 
     private static async Task<bool> EnsureProcessExitedAfterCancellationAsync(
