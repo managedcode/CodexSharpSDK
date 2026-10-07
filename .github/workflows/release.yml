@@ -10,6 +10,59 @@ env:
   NODE_VERSION: '22'
 
 jobs:
+  verify-ci:
+    name: Verify exact-SHA CI before release
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 31
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+    - name: Wait for successful CI on this commit
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        deadline=$((SECONDS + 1800))
+        ci_workflow_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows" \
+          --jq '[.workflows[] | select(.path == ".github/workflows/ci.yml")][0].id // empty')
+        if [[ -z "$ci_workflow_id" ]]; then
+          echo "Could not resolve this repository's CI workflow; release publication is blocked."
+          exit 1
+        fi
+
+        while (( SECONDS < deadline )); do
+          run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs" \
+            -f head_sha="$GITHUB_SHA" \
+            -F per_page=100 \
+            --jq "[.workflow_runs[] | select(.workflow_id == $ci_workflow_id and .head_sha == \"$GITHUB_SHA\" and .head_branch == \"main\" and .event == \"push\")] | sort_by(.created_at) | last // empty")
+
+          if [[ -z "$run" ]]; then
+            echo "Waiting for the CI run for this exact commit to appear."
+          else
+            status=$(jq -r '.status' <<<"$run")
+            conclusion=$(jq -r '.conclusion // ""' <<<"$run")
+            echo "Exact-SHA CI status: $status; conclusion: ${conclusion:-pending}."
+
+            if [[ "$status" == "completed" ]]; then
+              if [[ "$conclusion" == "success" ]]; then
+                exit 0
+              fi
+
+              echo "Exact-SHA CI did not succeed; release publication is blocked."
+              exit 1
+            fi
+          fi
+
+          sleep 15
+        done
+
+        echo "Timed out waiting for successful exact-SHA CI; release publication is blocked."
+        exit 1
+
   build:
     name: Build and Test
     runs-on: ubuntu-latest
@@ -91,7 +144,7 @@ jobs:
 
   publish-nuget:
     name: Publish to NuGet
-    needs: build
+    needs: [build, verify-ci]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
 
