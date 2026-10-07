@@ -43,7 +43,10 @@ jobs:
           [[ -n "$target_version" && "$target_version" != *$'\n'* ]] || { echo "Expected exactly one three-part Codex CLI TargetVersion."; exit 1; }
           npm install --no-save "@openai/codex@$target_version"
           export PATH="$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
-          version="$(codex --version)"
+          [[ -f node_modules/@openai/codex/package.json && -f node_modules/@openai/codex/bin/codex.js ]] || { echo "The pinned Codex npm package is missing its manifest or CLI entry point."; exit 1; }
+          package_version="$(node -p 'require("./node_modules/@openai/codex/package.json").version')"
+          [[ "$package_version" == "$target_version" ]] || { echo "The installed Codex npm package version does not match TargetVersion."; exit 1; }
+          version="$(node node_modules/@openai/codex/bin/codex.js --version)"
           printf '%s\n' "$version"
           actual_version="$(printf '%s\n' "$version" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sed -n '1p')"
           printf 'Installed Codex CLI version: %s\n' "$actual_version"
