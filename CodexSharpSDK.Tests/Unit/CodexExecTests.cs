@@ -42,7 +42,7 @@ public class CodexExecTests
     private const string WindowsNormalMultiLineCommand = "Write-Output 'first'; Write-Output 'second'";
     private const string WindowsNonZeroExitBeforeInputCommand = "[Console]::Error.WriteLine('provider failed'); Start-Sleep -Milliseconds 100; exit 23";
     private const string WindowsZeroExitAfterClosingInputCommand = "[Console]::OpenStandardInput().Dispose(); Start-Sleep -Milliseconds 100; exit 0";
-    private const string WindowsStaysRunningAfterClosingInputCommand = "Write-Output 'started'; [Console]::OpenStandardInput().Dispose(); Start-Sleep -Seconds 30";
+    private const string WindowsStaysRunningAfterClosingInputCommand = "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class CliTestNativeInput { [DllImport(\"kernel32.dll\")] public static extern bool CloseHandle(IntPtr handle); [DllImport(\"kernel32.dll\")] public static extern IntPtr GetStdHandle(int handle); }'; [CliTestNativeInput]::CloseHandle([CliTestNativeInput]::GetStdHandle(-10)); Write-Output 'started'; Start-Sleep -Seconds 30";
     private const string ExpectedFirstLine = "first";
     private const string ExpectedSecondLine = "second";
     private const int SmallOutputLimitCharacters = 64;
