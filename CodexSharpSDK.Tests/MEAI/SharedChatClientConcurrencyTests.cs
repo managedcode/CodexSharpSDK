@@ -58,7 +58,7 @@ public sealed class SharedChatClientConcurrencyTests
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
 
             var responses = await Task.WhenAll(
-                CollectUpdatesAsync(client, FirstPrompt, timeout.Token),
+                CollectUpdatesAsync(client, FirstPrompt, timeout.Token, new ChatOptions { ToolMode = ChatToolMode.Auto }),
                 CollectUpdatesAsync(client, SecondPrompt, timeout.Token));
 
             await Assert.That(ReadText(responses[0])).IsEqualTo(FirstPrompt);
@@ -80,11 +80,12 @@ public sealed class SharedChatClientConcurrencyTests
     private static async Task<List<ChatResponseUpdate>> CollectUpdatesAsync(
         CodexChatClient client,
         string prompt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ChatOptions? options = null)
     {
         var updates = new List<ChatResponseUpdate>();
         await foreach (var update in client.GetStreamingResponseAsync(
-                           [new ChatMessage(ChatRole.User, prompt)], cancellationToken: cancellationToken))
+                           [new ChatMessage(ChatRole.User, prompt)], options: options, cancellationToken: cancellationToken))
         {
             updates.Add(update);
         }

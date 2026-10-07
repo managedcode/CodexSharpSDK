@@ -39,7 +39,7 @@ Enable CodexSharpSDK to participate as a first-class provider in the `Microsoft.
 - `ChatOptions.ModelId` maps to `ThreadOptions.Model`.
 - `ChatOptions.ConversationId` triggers thread resume via `ResumeThread(id)`.
 - Multiple `ChatMessage` entries are concatenated into a single prompt while preserving original message chronology (Codex CLI is single-prompt-per-turn).
-- `ChatOptions.Tools` is silently ignored; tool results surface as custom `AIContent` types.
+- Nonempty `ChatOptions.Tools` and explicit non-Auto `ChatOptions.ToolMode` values fail with `NotSupportedException` before thread creation. Codex CLI native tools and their activity content are distinct from MEAI `AITool` function calling.
 - `GetService<ChatClientMetadata>()` returns provider name `"CodexCLI"` with default model from options.
 - Streaming maps assistant item completion, usage, and safe native activity metadata at item-level, not token-level. Completed command, file-change, MCP, web-search, and collaboration items retain their existing typed MEAI content and add fixed `managedcode:activity`/`managedcode:activity_phase` metadata; intermediate events use metadata only. Typed payload fields remain available for SDK consumer compatibility; Prostir reads only the safe categories and does not display raw native fields. `AgentMessageItem` updates are full snapshots in the `ThreadEvent` contract, so the adapter waits for the authoritative completion snapshot and emits it once per item identity; the separate app-server `item/agentMessage/delta` notification is not part of this `codex exec --json` contract.
 - Turn failures (`TurnFailedEvent`) propagate as `InvalidOperationException`.

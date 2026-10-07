@@ -26,6 +26,7 @@ public sealed class CodexChatClient : IChatClient
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(messages);
+        ChatOptionsMapper.ValidateFunctionCallingOptions(options);
 
         var (prompt, imageContents) = ChatMessageMapper.ToCodexInput(messages);
         var threadOptions = ChatOptionsMapper.ToThreadOptions(options, _options);
@@ -49,6 +50,7 @@ public sealed class CodexChatClient : IChatClient
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(messages);
+        ChatOptionsMapper.ValidateFunctionCallingOptions(options);
 
         var (prompt, imageContents) = ChatMessageMapper.ToCodexInput(messages);
         var threadOptions = ChatOptionsMapper.ToThreadOptions(options, _options);

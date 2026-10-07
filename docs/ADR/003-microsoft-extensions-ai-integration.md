@@ -21,7 +21,7 @@ Implement `IChatClient` from `Microsoft.Extensions.AI.Abstractions` in a **separ
 
 4. **Thread-per-call with ConversationId resume** — Each `GetResponseAsync` call creates or resumes a `CodexThread`. Thread ID flows via `ChatResponse.ConversationId` for multi-turn continuity.
 
-5. **No AITool support** — Codex CLI manages tools internally (commands, file changes, MCP). Consumer-registered `ChatOptions.Tools` are ignored; tool results surface as custom `AIContent` types instead.
+5. **No AITool support** — Codex CLI manages tools internally (commands, file changes, MCP). Nonempty consumer `ChatOptions.Tools` and explicit non-Auto `ToolMode` values fail before thread creation; native tool results remain separate typed `AIContent`.
 
 ## Diagram
 
@@ -65,7 +65,7 @@ flowchart LR
 ### Neutral
 
 - Additional NuGet package to maintain.
-- `ChatOptions.Tools` is a no-op; documented as limitation.
+- `ChatOptions.Tools` and unsupported explicit `ToolMode` values fail closed; automatic mode without supplied functions remains supported.
 
 ## Alternatives considered
 

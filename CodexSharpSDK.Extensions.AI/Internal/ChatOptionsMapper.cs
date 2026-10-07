@@ -5,6 +5,8 @@ namespace ManagedCode.CodexSharpSDK.Extensions.AI.Internal;
 
 internal static class ChatOptionsMapper
 {
+    private const string FunctionToolsUnsupportedMessage = "MEAI function tools are not supported by the Codex CLI adapter.";
+    private const string ToolModeUnsupportedMessage = "Only automatic MEAI tool mode is supported by the Codex CLI adapter.";
     internal const string SandboxModeKey = "codex:sandbox_mode";
     internal const string WorkingDirectoryKey = "codex:working_directory";
     internal const string ReasoningEffortKey = "codex:reasoning_effort";
@@ -15,6 +17,19 @@ internal static class ChatOptionsMapper
     internal const string EphemeralKey = "codex:ephemeral";
     internal const string ProfileKey = "codex:profile";
     internal const string SkipGitRepoCheckKey = "codex:skip_git_repo_check";
+
+    internal static void ValidateFunctionCallingOptions(ChatOptions? chatOptions)
+    {
+        if (chatOptions?.Tools is { Count: > 0 })
+        {
+            throw new NotSupportedException(FunctionToolsUnsupportedMessage);
+        }
+
+        if (chatOptions?.ToolMode is { } toolMode && toolMode is not AutoChatToolMode)
+        {
+            throw new NotSupportedException(ToolModeUnsupportedMessage);
+        }
+    }
 
     internal static ThreadOptions ToThreadOptions(ChatOptions? chatOptions, CodexChatClientOptions clientOptions)
     {
