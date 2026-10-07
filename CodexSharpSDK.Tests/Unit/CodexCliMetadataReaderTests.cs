@@ -5,6 +5,8 @@ namespace ManagedCode.CodexSharpSDK.Tests.Unit;
 
 public class CodexCliMetadataReaderTests
 {
+    private const string NpmUpdateCommand = "npm install --global @openai/codex@latest";
+    private const string UserInstallExecutablePath = "/usr/local/bin/codex";
     [Test]
     public async Task ParseInstalledVersion_ReturnsVersionTokenForCodexCliOutput()
     {
@@ -91,7 +93,19 @@ public class CodexCliMetadataReaderTests
 
         var command = CodexCliMetadataReader.ResolveUpdateCommand(executablePath, npmUserAgent: "npm/10.0.0");
 
-        await Assert.That(command).IsEqualTo("npm install --global @openai/codex@latest");
+        await Assert.That(command).IsEqualTo(NpmUpdateCommand);
+    }
+
+    [Test]
+    public async Task ResolveUpdateCommand_DoesNotConsultParentEnvironmentWhenDisabled()
+    {
+        var command = CodexCliMetadataReader.ResolveUpdateCommand(
+            UserInstallExecutablePath,
+            npmUserAgent: null,
+            bunInstallRoot: null,
+            useProcessEnvironmentFallback: false);
+
+        await Assert.That(command).IsEqualTo(NpmUpdateCommand);
     }
 
     [Test]

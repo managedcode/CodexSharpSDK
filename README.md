@@ -121,6 +121,11 @@ foreach (var model in metadata.Models.Where(model => model.IsListed))
 - default model from `~/.codex/config.toml`
 - model catalog from `~/.codex/models_cache.json`
 
+The CLI metadata probes follow `CodexOptions.EnvironmentVariables` and
+`CodexOptions.InheritEnvironmentVariables`. Their runtime and captured output are
+bounded by `CliMetadataProbeTimeout` and `CliMetadataMaximumOutputCharacters`;
+over-limit output fails explicitly instead of yielding partial metadata.
+
 ```csharp
 var update = client.GetCliUpdateStatus();
 if (update.IsUpdateAvailable)

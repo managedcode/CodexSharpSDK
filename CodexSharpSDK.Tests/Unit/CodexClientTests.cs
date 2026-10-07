@@ -1,6 +1,7 @@
 using ManagedCode.CodexSharpSDK.Client;
 using ManagedCode.CodexSharpSDK.Configuration;
 using ManagedCode.CodexSharpSDK.Execution;
+using ManagedCode.CodexSharpSDK.Internal;
 using ManagedCode.CodexSharpSDK.Models;
 using ManagedCode.CodexSharpSDK.Tests.Shared;
 
@@ -8,6 +9,25 @@ namespace ManagedCode.CodexSharpSDK.Tests.Unit;
 
 public class CodexClientTests
 {
+    private const string NpmFixtureSkipReason = "The npm.cmd invocation fixture is Windows-specific.";
+    private const string NpmFixtureDirectoryPrefix = "CodexNpmProbe-";
+    private const string NpmFixtureScriptFileName = "npm.cmd";
+    private const string NpmFixtureArgumentsFileName = "npm-arguments.txt";
+    private const string NpmFixtureVersionOutput = "99.0.0";
+    private const string NpmFixtureExpectedArguments = "view @openai/codex version --silent";
+    private const string NpmFixtureScriptContent = "@echo off\r\necho %*>> \"%SDK_NPM_ARGS_FILE%\"\r\necho " + NpmFixtureVersionOutput + "\r\n";
+    private const string NpmArgumentsEnvironmentVariable = "SDK_NPM_ARGS_FILE";
+    private const string SystemRootEnvironmentVariable = "SystemRoot";
+    private const string CodexHomeEnvironmentVariable = "CODEX_HOME";
+    private const string HomeEnvironmentVariable = "HOME";
+    private const string PathEnvironmentVariable = "PATH";
+    private const string DotCodexDirectoryName = ".codex";
+    private const string CodexConfigFileName = "config.toml";
+    private const string CodexModelsCacheFileName = "models_cache.json";
+    private const string CodexConfigFixture = "model = \"" + CodexModels.Gpt53Codex + "\"";
+    private const string CodexModelsCacheFixture =
+        "{ \"models\": [ { \"slug\": \"" + CodexModels.Gpt53Codex +
+        "\", \"display_name\": \"" + CodexModels.Gpt53Codex + "\", \"visibility\": \"list\", \"supported_in_api\": true } ] }";
     [Test]
     public async Task StartAsync_CanBeCalledConcurrently()
     {
@@ -277,6 +297,57 @@ public class CodexClientTests
     }
 
     [Test]
+    public async Task CodexCli_GetCliMetadata_UsesConfiguredCodexHomeWithEnvironmentAllowlist()
+    {
+        var codexHome = CreateMetadataSandbox();
+        try
+        {
+            File.WriteAllText(Path.Combine(codexHome, CodexConfigFileName), CodexConfigFixture);
+            File.WriteAllText(Path.Combine(codexHome, CodexModelsCacheFileName), CodexModelsCacheFixture);
+            using var client = CreateMetadataClient(new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [PathEnvironmentVariable] = Environment.GetEnvironmentVariable(PathEnvironmentVariable) ?? string.Empty,
+                [CodexHomeEnvironmentVariable] = codexHome,
+            });
+
+            var metadata = client.GetCliMetadata();
+
+            await Assert.That(metadata.DefaultModel).IsEqualTo(CodexModels.Gpt53Codex);
+            await Assert.That(metadata.Models).Count().IsEqualTo(1);
+            await Assert.That(metadata.Models[0].Slug).IsEqualTo(CodexModels.Gpt53Codex);
+        }
+        finally
+        {
+            Directory.Delete(codexHome, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task CodexCli_GetCliMetadata_UsesExplicitHomeFallbackWhenInheritanceIsDisabled()
+    {
+        var home = CreateMetadataSandbox();
+        var codexHome = Path.Combine(home, DotCodexDirectoryName);
+        Directory.CreateDirectory(codexHome);
+        try
+        {
+            File.WriteAllText(Path.Combine(codexHome, CodexConfigFileName), CodexConfigFixture);
+            using var client = CreateMetadataClient(new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [PathEnvironmentVariable] = Environment.GetEnvironmentVariable(PathEnvironmentVariable) ?? string.Empty,
+                [HomeEnvironmentVariable] = home,
+            });
+
+            var metadata = client.GetCliMetadata();
+
+            await Assert.That(metadata.DefaultModel).IsEqualTo(CodexModels.Gpt53Codex);
+        }
+        finally
+        {
+            Directory.Delete(home, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task CodexCli_Smoke_GetCliUpdateStatus_ReturnsInstalledVersion()
     {
         using var client = new CodexClient(new CodexOptions());
@@ -285,6 +356,64 @@ public class CodexClientTests
 
         await Assert.That(string.IsNullOrWhiteSpace(status.InstalledVersion)).IsFalse();
         await Assert.That(status.InstalledVersion.Contains('.')).IsTrue();
+    }
+
+    [Test]
+    public async Task CodexCli_UpdateStatus_InvokesScopedNpmPackageThroughWindowsCommandProcessor()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Skip.Test(NpmFixtureSkipReason);
+            return;
+        }
+
+        var sandbox = Path.Combine(Environment.CurrentDirectory, "tests", ".sandbox",
+            $"{NpmFixtureDirectoryPrefix}{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sandbox);
+        var npmScriptPath = Path.Combine(sandbox, NpmFixtureScriptFileName);
+        var argumentsPath = Path.Combine(sandbox, NpmFixtureArgumentsFileName);
+        try
+        {
+            File.WriteAllText(npmScriptPath, NpmFixtureScriptContent);
+            using var client = new CodexClient(new CodexOptions
+            {
+                CodexExecutablePath = CodexCliLocator.FindCodexPath(null),
+                InheritEnvironmentVariables = false,
+                EnvironmentVariables = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    [PathEnvironmentVariable] = string.Concat(sandbox, Path.PathSeparator,
+                        Environment.GetEnvironmentVariable(PathEnvironmentVariable)),
+                    [SystemRootEnvironmentVariable] = Environment.GetEnvironmentVariable(SystemRootEnvironmentVariable) ?? string.Empty,
+                    [NpmArgumentsEnvironmentVariable] = argumentsPath,
+                },
+            });
+
+            var status = client.GetCliUpdateStatus();
+
+            await Assert.That(status.LatestVersion).IsEqualTo(NpmFixtureVersionOutput);
+            await Assert.That(status.IsUpdateAvailable).IsTrue();
+            await Assert.That(File.ReadAllText(argumentsPath).Trim()).IsEqualTo(NpmFixtureExpectedArguments);
+        }
+        finally
+        {
+            Directory.Delete(sandbox, recursive: true);
+        }
+    }
+
+    private static CodexClient CreateMetadataClient(IReadOnlyDictionary<string, string> environment) =>
+        new(new CodexOptions
+        {
+            CodexExecutablePath = CodexCliLocator.FindCodexPath(null),
+            EnvironmentVariables = environment,
+            InheritEnvironmentVariables = false,
+        });
+
+    private static string CreateMetadataSandbox()
+    {
+        var sandbox = Path.Combine(Environment.CurrentDirectory, "tests", ".sandbox",
+            $"CodexClientMetadata-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sandbox);
+        return sandbox;
     }
 
     [Test]

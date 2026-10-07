@@ -62,13 +62,20 @@ public sealed class CodexClient : IDisposable
     public CodexCliMetadata GetCliMetadata()
     {
         var executablePath = CodexCliLocator.FindCodexPath(_options.CodexExecutablePath);
-        return CodexCliMetadataReader.Read(executablePath);
+        using var exec = CreateExec();
+        return CodexCliMetadataReader.Read(executablePath, exec.BuildEnvironment(_options.BaseUrl, _options.ApiKey),
+            _options.InheritEnvironmentVariables ?? _options.EnvironmentVariables is null,
+            _options.CliMetadataProbeTimeout, _options.CliMetadataMaximumOutputCharacters);
     }
 
     public CodexCliUpdateStatus GetCliUpdateStatus()
     {
         var executablePath = CodexCliLocator.FindCodexPath(_options.CodexExecutablePath);
-        return CodexCliMetadataReader.ReadUpdateStatus(executablePath);
+        using var exec = CreateExec();
+        return CodexCliMetadataReader.ReadUpdateStatus(executablePath,
+            exec.BuildEnvironment(_options.BaseUrl, _options.ApiKey),
+            _options.InheritEnvironmentVariables ?? _options.EnvironmentVariables is null,
+            _options.CliMetadataProbeTimeout, _options.CliMetadataMaximumOutputCharacters);
     }
 
     public void Dispose() => _connectionState.Dispose();
@@ -83,7 +90,8 @@ public sealed class CodexClient : IDisposable
             _options.Config,
             null,
             _options.Logger,
-            _options.ProcessTerminationTimeout);
+            _options.ProcessTerminationTimeout,
+            _options.InheritEnvironmentVariables);
     }
 
     private static CodexClientOptions CreateClientOptions(CodexOptions options)

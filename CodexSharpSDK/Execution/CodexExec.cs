@@ -53,6 +53,7 @@ public sealed class CodexExec : IDisposable
 
     private readonly string _executablePath;
     private readonly IReadOnlyDictionary<string, string>? _environmentOverride;
+    private readonly bool _inheritEnvironmentVariables;
     private readonly JsonObject? _configOverrides;
     private readonly ICodexProcessRunner _processRunner;
     private readonly ILogger _logger;
@@ -64,7 +65,7 @@ public sealed class CodexExec : IDisposable
         IReadOnlyDictionary<string, string>? environmentOverride = null,
         JsonObject? configOverrides = null,
         ILogger? logger = null)
-        : this(executablePath, environmentOverride, configOverrides, null, logger, CodexOptions.DefaultProcessTerminationTimeout)
+        : this(executablePath, environmentOverride, configOverrides, null, logger, CodexOptions.DefaultProcessTerminationTimeout, null)
     {
     }
 
@@ -74,7 +75,7 @@ public sealed class CodexExec : IDisposable
         IReadOnlyDictionary<string, string>? environmentOverride = null,
         JsonObject? configOverrides = null,
         ILogger? logger = null)
-        : this(executablePath, environmentOverride, configOverrides, null, logger, processTerminationTimeout)
+        : this(executablePath, environmentOverride, configOverrides, null, logger, processTerminationTimeout, null)
     {
     }
 
@@ -84,10 +85,12 @@ public sealed class CodexExec : IDisposable
         JsonObject? configOverrides,
         ICodexProcessRunner? processRunner,
         ILogger? logger = null,
-        TimeSpan? processTerminationTimeout = null)
+        TimeSpan? processTerminationTimeout = null,
+        bool? inheritEnvironmentVariables = null)
     {
         _executablePath = CodexCliLocator.FindCodexPath(executablePath);
         _environmentOverride = environmentOverride;
+        _inheritEnvironmentVariables = inheritEnvironmentVariables ?? environmentOverride is null;
         _configOverrides = configOverrides;
         _processRunner = processRunner ?? new DefaultCodexProcessRunner();
         _logger = logger ?? NullLogger.Instance;
@@ -367,14 +370,7 @@ public sealed class CodexExec : IDisposable
     {
         var environment = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        if (_environmentOverride is not null)
-        {
-            foreach (var (key, value) in _environmentOverride)
-            {
-                environment[key] = value;
-            }
-        }
-        else
+        if (_inheritEnvironmentVariables)
         {
             foreach (DictionaryEntry variable in Environment.GetEnvironmentVariables())
             {
@@ -382,6 +378,14 @@ public sealed class CodexExec : IDisposable
                 {
                     environment[key] = value;
                 }
+            }
+        }
+
+        if (_environmentOverride is not null)
+        {
+            foreach (var (key, value) in _environmentOverride)
+            {
+                environment[key] = value;
             }
         }
 

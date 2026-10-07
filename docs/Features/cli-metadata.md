@@ -45,6 +45,8 @@ Expose runtime Codex CLI metadata to SDK consumers:
 - SDK option and metadata decisions are based on real Codex CLI behavior, not TypeScript SDK surface.
 - Update check failures (for example missing `npm`) must return actionable status messages and never silently fail.
 - Update command text must not assume npm-only installs; SDK must emit `bun` update command when bun-managed install is detected.
+- Metadata probes inherit only the configured environment policy and use `CodexOptions.CliMetadataProbeTimeout` plus `CodexOptions.CliMetadataMaximumOutputCharacters` to bound process time and captured output.
+- Stdout and stderr are drained concurrently. A timed-out probe kills the process tree and confirms root-process exit; output exceeding either stream's cap fails instead of parsing truncated content. Cached API-support metadata is not a guarantee that a model is enabled for this CLI account.
 
 ---
 

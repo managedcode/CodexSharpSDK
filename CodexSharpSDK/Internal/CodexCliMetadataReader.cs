@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using ManagedCode.CodexSharpSDK.Models;
@@ -9,7 +8,17 @@ internal static class CodexCliMetadataReader
 {
     private const string VersionFlag = "--version";
     private const string CliVersionPrefix = "codex-cli";
+    private const string CodexHomeEnvironmentVariable = "CODEX_HOME";
+    private const string ProbeFailureMessage = "Codex CLI metadata probe failed.";
+    private const string InvalidProbeOutputMessage = "Codex CLI metadata probe returned invalid output.";
+    private static readonly TimeSpan DefaultProbeTimeout = TimeSpan.FromSeconds(10);
+    private const int DefaultMaximumOutputCharacters = 65536;
+    private static readonly IReadOnlyDictionary<string, string> EmptyEnvironment = new Dictionary<string, string>(StringComparer.Ordinal);
     private const string NpmExecutableName = "npm";
+    private const string NpmWindowsScriptName = "npm.cmd";
+    private const string WindowsCommandProcessorName = "cmd.exe";
+    private const string WindowsCommandDisableAutoRunFlag = "/d";
+    private const string WindowsCommandFlag = "/c";
     private const string NpmViewCommand = "view";
     private const string NpmPackageName = "@openai/codex";
     private const string NpmVersionProperty = "version";
@@ -24,6 +33,8 @@ internal static class CodexCliMetadataReader
     private const string UpdateCheckFailedMessagePrefix = "Failed to check latest Codex CLI version from npm:";
 
     private const string DotCodexDirectory = ".codex";
+    private const string HomeEnvironmentVariable = "HOME";
+    private const string UserProfileEnvironmentVariable = "USERPROFILE";
     private const string ModelsCacheFileName = "models_cache.json";
     private const string ConfigFileName = "config.toml";
 
@@ -45,28 +56,49 @@ internal static class CodexCliMetadataReader
     private const char Escape = '\\';
     private const char SectionPrefix = '[';
 
-    public static CodexCliMetadata Read(string executablePath)
+    public static CodexCliMetadata Read(string executablePath) =>
+        Read(executablePath, EmptyEnvironment, true, DefaultProbeTimeout, DefaultMaximumOutputCharacters);
+
+    public static CodexCliMetadata Read(
+        string executablePath,
+        IReadOnlyDictionary<string, string> environment,
+        bool inheritEnvironmentVariables,
+        TimeSpan probeTimeout,
+        int maximumOutputCharacters)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
+        ArgumentNullException.ThrowIfNull(environment);
 
-        var installedVersion = ReadInstalledVersion(executablePath);
-        var homeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrWhiteSpace(homeDirectory))
+        var installedVersion = ReadInstalledVersion(executablePath, environment, inheritEnvironmentVariables,
+            probeTimeout, maximumOutputCharacters);
+        var codexHome = ResolveCodexHome(environment, inheritEnvironmentVariables);
+        if (string.IsNullOrWhiteSpace(codexHome))
         {
             return new CodexCliMetadata(installedVersion, null, []);
         }
 
-        var defaultModel = ReadDefaultModel(homeDirectory);
-        var models = ReadModels(homeDirectory);
+        var defaultModel = ReadDefaultModel(codexHome);
+        var models = ReadModels(codexHome);
         return new CodexCliMetadata(installedVersion, defaultModel, models);
     }
 
-    public static CodexCliUpdateStatus ReadUpdateStatus(string executablePath)
+    public static CodexCliUpdateStatus ReadUpdateStatus(string executablePath) =>
+        ReadUpdateStatus(executablePath, EmptyEnvironment, true, DefaultProbeTimeout, DefaultMaximumOutputCharacters);
+
+    public static CodexCliUpdateStatus ReadUpdateStatus(
+        string executablePath,
+        IReadOnlyDictionary<string, string> environment,
+        bool inheritEnvironmentVariables,
+        TimeSpan probeTimeout,
+        int maximumOutputCharacters)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
+        ArgumentNullException.ThrowIfNull(environment);
 
-        var installedVersion = ReadInstalledVersion(executablePath);
-        var probe = ProbeLatestPublishedVersion();
+        var installedVersion = ReadInstalledVersion(executablePath, environment, inheritEnvironmentVariables,
+            probeTimeout, maximumOutputCharacters);
+        var probe = ProbeLatestPublishedVersion(environment, inheritEnvironmentVariables, probeTimeout,
+            maximumOutputCharacters);
         if (!string.IsNullOrWhiteSpace(probe.ErrorMessage))
         {
             var failureMessage = $"{UpdateCheckFailedMessagePrefix} {probe.ErrorMessage}";
@@ -84,7 +116,10 @@ internal static class CodexCliMetadataReader
             return new CodexCliUpdateStatus(installedVersion, probe.LatestVersion, false, null, null);
         }
 
-        var updateCommand = ResolveUpdateCommand(executablePath);
+        var updateCommand = ResolveUpdateCommand(executablePath,
+            environment.GetValueOrDefault(NpmUserAgentEnvironmentVariable),
+            environment.GetValueOrDefault(BunInstallEnvironmentVariable),
+            inheritEnvironmentVariables);
         var message =
             $"{UpdateAvailableMessagePrefix} installed {installedVersion}, latest {probe.LatestVersion}. Run '{updateCommand}'.";
         return new CodexCliUpdateStatus(
@@ -159,7 +194,8 @@ internal static class CodexCliMetadataReader
     internal static string ResolveUpdateCommand(
         string executablePath,
         string? npmUserAgent = null,
-        string? bunInstallRoot = null)
+        string? bunInstallRoot = null,
+        bool useProcessEnvironmentFallback = true)
     {
         if (string.IsNullOrWhiteSpace(executablePath))
         {
@@ -171,7 +207,7 @@ internal static class CodexCliMetadataReader
             return BunGlobalUpdateCommand;
         }
 
-        var resolvedUserAgent = string.IsNullOrWhiteSpace(npmUserAgent)
+        var resolvedUserAgent = string.IsNullOrWhiteSpace(npmUserAgent) && useProcessEnvironmentFallback
             ? Environment.GetEnvironmentVariable(NpmUserAgentEnvironmentVariable)
             : npmUserAgent;
         if (IsBunUserAgent(resolvedUserAgent))
@@ -179,7 +215,7 @@ internal static class CodexCliMetadataReader
             return BunGlobalUpdateCommand;
         }
 
-        var resolvedBunInstallRoot = string.IsNullOrWhiteSpace(bunInstallRoot)
+        var resolvedBunInstallRoot = string.IsNullOrWhiteSpace(bunInstallRoot) && useProcessEnvironmentFallback
             ? Environment.GetEnvironmentVariable(BunInstallEnvironmentVariable)
             : bunInstallRoot;
         if (IsPathUnderRoot(executablePath, resolvedBunInstallRoot))
@@ -284,96 +320,127 @@ internal static class CodexCliMetadataReader
         return models;
     }
 
-    private static string ReadInstalledVersion(string executablePath)
+    private static string ReadInstalledVersion(
+        string executablePath,
+        IReadOnlyDictionary<string, string> environment,
+        bool inheritEnvironmentVariables,
+        TimeSpan probeTimeout,
+        int maximumOutputCharacters)
     {
-        var startInfo = new ProcessStartInfo(executablePath)
+        var probe = BoundedCliProcessProbe.Run(executablePath, [VersionFlag], environment,
+            inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters);
+        if (probe.ExitCode != 0)
         {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        startInfo.ArgumentList.Add(VersionFlag);
+            throw new InvalidOperationException(ProbeFailureMessage);
+        }
 
-        using var process = new Process { StartInfo = startInfo };
+        var versionOutput = string.IsNullOrWhiteSpace(probe.StandardOutput)
+            ? probe.StandardError
+            : probe.StandardOutput;
         try
         {
-            if (!process.Start())
-            {
-                throw new InvalidOperationException($"Failed to start Codex CLI at '{executablePath}' to read version.");
-            }
+            return ParseInstalledVersion(versionOutput);
         }
-        catch (Exception exception)
+        catch (InvalidOperationException)
         {
-            throw new InvalidOperationException($"Failed to start Codex CLI at '{executablePath}' to read version.", exception);
+            throw new InvalidOperationException(InvalidProbeOutputMessage);
         }
-
-        var standardOutput = process.StandardOutput.ReadToEnd();
-        var standardError = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"Failed to read Codex CLI version from '{executablePath}'. Exit code {process.ExitCode}: {standardError}");
-        }
-
-        var versionOutput = string.IsNullOrWhiteSpace(standardOutput)
-            ? standardError
-            : standardOutput;
-        return ParseInstalledVersion(versionOutput);
     }
 
-    private static LatestVersionProbe ProbeLatestPublishedVersion()
+    private static LatestVersionProbe ProbeLatestPublishedVersion(
+        IReadOnlyDictionary<string, string> environment,
+        bool inheritEnvironmentVariables,
+        TimeSpan probeTimeout,
+        int maximumOutputCharacters)
     {
-        var startInfo = new ProcessStartInfo(NpmExecutableName)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        startInfo.ArgumentList.Add(NpmViewCommand);
-        startInfo.ArgumentList.Add(NpmPackageName);
-        startInfo.ArgumentList.Add(NpmVersionProperty);
-        startInfo.ArgumentList.Add(NpmSilentFlag);
-
-        using var process = new Process { StartInfo = startInfo };
         try
         {
-            if (!process.Start())
+            var result = RunNpmVersionProbe(environment, inheritEnvironmentVariables,
+                probeTimeout, maximumOutputCharacters);
+            if (result.ExitCode != 0)
             {
-                return LatestVersionProbe.WithError("npm process did not start.");
+                return LatestVersionProbe.WithError(ProbeFailureMessage);
+            }
+
+            var latestVersion = ParseLatestPublishedVersion(result.StandardOutput);
+            return string.IsNullOrWhiteSpace(latestVersion)
+                ? LatestVersionProbe.WithError(InvalidProbeOutputMessage)
+                : LatestVersionProbe.WithLatest(latestVersion);
+        }
+        catch (Exception)
+        {
+            return LatestVersionProbe.WithError(ProbeFailureMessage);
+        }
+    }
+
+    private static CliProcessProbeResult RunNpmVersionProbe(
+        IReadOnlyDictionary<string, string> environment,
+        bool inheritEnvironmentVariables,
+        TimeSpan probeTimeout,
+        int maximumOutputCharacters)
+    {
+        var npmArguments = new[] { NpmViewCommand, NpmPackageName, NpmVersionProperty, NpmSilentFlag };
+        if (!OperatingSystem.IsWindows())
+        {
+            return BoundedCliProcessProbe.Run(NpmExecutableName, npmArguments, environment,
+                inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters);
+        }
+
+        var commandProcessor = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
+            WindowsCommandProcessorName);
+        return BoundedCliProcessProbe.Run(commandProcessor,
+            [WindowsCommandDisableAutoRunFlag, WindowsCommandFlag, NpmWindowsScriptName, .. npmArguments],
+            environment, inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters);
+    }
+
+    private static string ResolveCodexHome(
+        IReadOnlyDictionary<string, string> environment,
+        bool inheritEnvironmentVariables)
+    {
+        if (environment.TryGetValue(CodexHomeEnvironmentVariable, out var configuredCodexHome) &&
+            !string.IsNullOrWhiteSpace(configuredCodexHome))
+        {
+            return configuredCodexHome;
+        }
+
+        if (inheritEnvironmentVariables)
+        {
+            var inheritedCodexHome = Environment.GetEnvironmentVariable(CodexHomeEnvironmentVariable);
+            if (!string.IsNullOrWhiteSpace(inheritedCodexHome))
+            {
+                return inheritedCodexHome;
             }
         }
-        catch (Exception exception)
+
+        var homeDirectory = environment.GetValueOrDefault(HomeEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(homeDirectory) && inheritEnvironmentVariables)
         {
-            return LatestVersionProbe.WithError(exception.Message);
+            homeDirectory = Environment.GetEnvironmentVariable(HomeEnvironmentVariable);
         }
 
-        var standardOutput = process.StandardOutput.ReadToEnd();
-        var standardError = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-
-        if (process.ExitCode != 0)
+        if (string.IsNullOrWhiteSpace(homeDirectory))
         {
-            var errorText = string.IsNullOrWhiteSpace(standardError)
-                ? standardOutput
-                : standardError;
-            return LatestVersionProbe.WithError(errorText.Trim());
+            homeDirectory = environment.GetValueOrDefault(UserProfileEnvironmentVariable);
         }
 
-        var latestVersion = ParseLatestPublishedVersion(standardOutput);
-        if (string.IsNullOrWhiteSpace(latestVersion))
+        if (string.IsNullOrWhiteSpace(homeDirectory) && inheritEnvironmentVariables)
         {
-            return LatestVersionProbe.WithError("npm output did not contain a valid semantic version.");
+            homeDirectory = Environment.GetEnvironmentVariable(UserProfileEnvironmentVariable);
         }
 
-        return LatestVersionProbe.WithLatest(latestVersion);
+        if (string.IsNullOrWhiteSpace(homeDirectory) && inheritEnvironmentVariables)
+        {
+            homeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        }
+
+        return string.IsNullOrWhiteSpace(homeDirectory)
+            ? string.Empty
+            : Path.Combine(homeDirectory, DotCodexDirectory);
     }
 
     private static string? ReadDefaultModel(string homeDirectory)
     {
-        var configPath = Path.Combine(homeDirectory, DotCodexDirectory, ConfigFileName);
+        var configPath = Path.Combine(homeDirectory, ConfigFileName);
         if (!File.Exists(configPath))
         {
             return null;
@@ -395,7 +462,7 @@ internal static class CodexCliMetadataReader
 
     private static IReadOnlyList<CodexModelMetadata> ReadModels(string homeDirectory)
     {
-        var modelsCachePath = Path.Combine(homeDirectory, DotCodexDirectory, ModelsCacheFileName);
+        var modelsCachePath = Path.Combine(homeDirectory, ModelsCacheFileName);
         if (!File.Exists(modelsCachePath))
         {
             return [];
