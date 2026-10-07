@@ -23,13 +23,15 @@ public class CodexExecTests
     private const string DuplexPressureTemplatePlaceholder = "{0}";
     private const string PosixFixtureSkipReason = "The public CLI yield-boundary fixture currently uses a POSIX executable script.";
     private const string LinuxFixtureSkipReason = "The detached stderr-retention fixture requires Linux setsid.";
-    private const string StderrClosureFailure = "stderr stream closed";
+    private const string StderrClosureFailure = "Codex CLI process and output cleanup could not be confirmed.";
     private const string ProcessOutputLimitMessage = "Codex CLI process exceeded the configured output limit.";
     private const string PosixSingleLineOverflowCommand = "printf '%100s\\n' x; exec /bin/sleep 30";
     private const string PosixMultiLineOverflowCommand = "printf '1234567890\\n1234567890\\n1234567890\\n'";
     private const string PosixStandardErrorPressureCommand = "printf '%100s' x >&2; exec /bin/sleep 30";
     private const string PosixNormalMultiLineCommand = "printf 'first\\nsecond\\n'";
     private const string PosixNonZeroExitBeforeInputCommand = "printf 'provider failed\\n' >&2; /bin/sleep 0.1; exit 23";
+    private const string PosixZeroExitAfterClosingInputCommand = "exec 0<&-; /bin/sleep 0.1; exit 0";
+    private const string PosixStaysRunningAfterClosingInputCommand = "printf 'started\\n'; exec 0<&-; exec /bin/sleep 30";
     private const string WindowsPowerShellPath = "powershell.exe";
     private const string WindowsNoProfileFlag = "-NoProfile";
     private const string WindowsNonInteractiveFlag = "-NonInteractive";
@@ -39,6 +41,8 @@ public class CodexExecTests
     private const string WindowsStandardErrorPressureCommand = "[Console]::Error.Write('x' * 100); Start-Sleep -Seconds 30";
     private const string WindowsNormalMultiLineCommand = "Write-Output 'first'; Write-Output 'second'";
     private const string WindowsNonZeroExitBeforeInputCommand = "[Console]::Error.WriteLine('provider failed'); Start-Sleep -Milliseconds 100; exit 23";
+    private const string WindowsZeroExitAfterClosingInputCommand = "[Console]::OpenStandardInput().Dispose(); Start-Sleep -Milliseconds 100; exit 0";
+    private const string WindowsStaysRunningAfterClosingInputCommand = "Write-Output 'started'; [Console]::OpenStandardInput().Dispose(); Start-Sleep -Seconds 30";
     private const string ExpectedFirstLine = "first";
     private const string ExpectedSecondLine = "second";
     private const int SmallOutputLimitCharacters = 64;
@@ -806,6 +810,51 @@ public class CodexExecTests
         {
             Directory.Delete(sandboxDirectory, recursive: true);
         }
+    }
+
+    [Test]
+    public async Task DefaultProcessRunner_ZeroExitAfterClosingInputRemainsAnInputFailure()
+    {
+        var prompt = new string(PromptCharacter, DuplexPromptCharacters);
+        var invocation = CreateOutputInvocation(
+            OperatingSystem.IsWindows() ? WindowsZeroExitAfterClosingInputCommand : PosixZeroExitAfterClosingInputCommand,
+            TimeSpan.FromSeconds(5), DuplexMaximumProcessOutputCharacters) with
+        { Input = prompt };
+        var action = async () =>
+        {
+            await foreach (var _ in new DefaultCodexProcessRunner().RunAsync(invocation, NullLogger.Instance, CancellationToken.None))
+            {
+            }
+        };
+
+        var exception = await Assert.That(action).ThrowsException();
+
+        await Assert.That(exception).IsTypeOf<IOException>();
+        await Assert.That(exception).IsNotTypeOf<CliExecutionFailureException>();
+    }
+
+    [Test]
+    public async Task DefaultProcessRunner_StillRunningAfterClosingInputIsBoundedAndUnconfirmed()
+    {
+        var prompt = new string(PromptCharacter, DuplexPromptCharacters);
+        var invocation = CreateOutputInvocation(
+            OperatingSystem.IsWindows() ? WindowsStaysRunningAfterClosingInputCommand : PosixStaysRunningAfterClosingInputCommand,
+            TimeSpan.FromMilliseconds(250), DuplexMaximumProcessOutputCharacters) with
+        { Input = prompt };
+        var stopwatch = Stopwatch.StartNew();
+        var action = async () =>
+        {
+            await foreach (var _ in new DefaultCodexProcessRunner().RunAsync(invocation, NullLogger.Instance, CancellationToken.None))
+            {
+            }
+        };
+
+        var exception = await Assert.That(action).ThrowsException();
+        stopwatch.Stop();
+
+        await Assert.That(exception).IsTypeOf<TimeoutException>();
+        await Assert.That(exception).IsNotTypeOf<CliExecutionFailureException>();
+        await Assert.That(stopwatch.Elapsed < TimeSpan.FromSeconds(3)).IsTrue();
     }
 
     [Test]

@@ -1005,6 +1005,22 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
 
             throw;
         }
+        catch (IOException) when (standardInputWriteTask.IsFaulted &&
+                                  standardInputWriteTask.Exception?.GetBaseException() is IOException)
+        {
+            await process.WaitForExitAsync(CancellationToken.None)
+                .WaitAsync(invocation.ProcessTerminationTimeout, CancellationToken.None)
+                .ConfigureAwait(false);
+            var capturedStandardError = await ReadStandardErrorAsync(standardErrorTask, invocation.ProcessTerminationTimeout)
+                .ConfigureAwait(false);
+            if (process.ExitCode != 0)
+            {
+                throw CliExecutionFailureException.FromProcessExit(process.ExitCode,
+                    $"Codex Exec exited with code {process.ExitCode}: {capturedStandardError.Text}");
+            }
+
+            throw;
+        }
         catch (Exception) when (process.HasExited)
         {
             await process.WaitForExitAsync(CancellationToken.None)

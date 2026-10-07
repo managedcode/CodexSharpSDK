@@ -24,7 +24,7 @@ public sealed class CodexWindowsNpmLaunchTests
         "if (args.includes('--version')) { console.log('codex-cli 0.160.1'); process.exit(0); }\n" +
         "console.log(JSON.stringify({type:'thread.started', thread_id:'fixture'}));\n" +
         "console.log(JSON.stringify({type:'item.completed', item:{id:'message', type:'agent_message', text:input}}));\n" +
-        "console.log(JSON.stringify({type:'turn.completed'}));\n";
+        "console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,cached_input_tokens:0,output_tokens:1}}));\n";
 
     [Test]
     public async Task WindowsNpmShim_UsesNodeAndLiteralArgumentsForMetadataCoreAndMeai()
