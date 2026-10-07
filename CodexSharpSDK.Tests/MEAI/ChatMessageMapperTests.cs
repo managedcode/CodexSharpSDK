@@ -6,6 +6,19 @@ namespace ManagedCode.CodexSharpSDK.Extensions.AI.Tests;
 
 public class ChatMessageMapperTests
 {
+    private const string StandardInstructions = "Follow the standard MEAI instructions.";
+    private const string ExistingSystemText = "Existing system message.";
+    private const string UserQuestion = "User question.";
+    private const string ExpectedInstructionPrompt = "[System] Follow the standard MEAI instructions.\n\n[System] Existing system message.\n\nUser question.";
+
+    [Test]
+    public async Task StandardInstructionsPrecedeSystemAndUserMessages()
+    {
+        var messages = new[] { new ChatMessage(ChatRole.System, ExistingSystemText), new ChatMessage(ChatRole.User, UserQuestion) };
+        var (prompt, _) = ChatMessageMapper.ToCodexInput(messages, StandardInstructions);
+        await Assert.That(prompt).IsEqualTo(ExpectedInstructionPrompt);
+    }
+
     [Test]
     public async Task ToCodexInput_TextOnly_ReturnsPrompt()
     {

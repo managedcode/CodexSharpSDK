@@ -10,9 +10,13 @@ internal static class ChatMessageMapper
     private const string ParagraphSeparator = "\n\n";
     private const string ImageMediaPrefix = "image/";
 
-    internal static (string Prompt, List<DataContent> ImageContents) ToCodexInput(IEnumerable<ChatMessage> messages)
+    internal static (string Prompt, List<DataContent> ImageContents) ToCodexInput(IEnumerable<ChatMessage> messages, string? instructions = null)
     {
         var promptParts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(instructions))
+        {
+            promptParts.Add(string.Concat(SystemPrefix, instructions));
+        }
         var imageContents = new List<DataContent>();
 
         foreach (var message in messages)

@@ -184,3 +184,7 @@ Native provider failures stop producing response updates, but the adapter contin
 - All mapper and DI tests pass.
 - ADR and feature docs created.
 - Architecture overview updated.
+
+## Standard MEAI request options
+
+`ChatOptions.Instructions` is included before the supplied messages using the adapter’s existing system-message mapping in both response modes. Existing system and user messages retain their order. Model selection remains supported through `ModelId`. Explicit temperature, nucleus/top-k sampling, maximum output tokens, seed, penalties, stop sequences and non-text response formats are rejected before any native thread/process starts because this adapter does not implement those generation controls. The core typed `OutputSchema` API remains separate; arbitrary MEAI JSON schemas are not silently approximated.

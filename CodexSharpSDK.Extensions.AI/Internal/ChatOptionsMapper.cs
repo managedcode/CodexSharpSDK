@@ -5,6 +5,7 @@ namespace ManagedCode.CodexSharpSDK.Extensions.AI.Internal;
 
 internal static class ChatOptionsMapper
 {
+    private const string GenerationOptionsUnsupportedMessage = "The Codex CLI adapter does not support the requested MEAI generation options.";
     private const string FunctionToolsUnsupportedMessage = "MEAI function tools are not supported by the Codex CLI adapter.";
     private const string ToolModeUnsupportedMessage = "Only automatic MEAI tool mode is supported by the Codex CLI adapter.";
     internal const string SandboxModeKey = "codex:sandbox_mode";
@@ -17,6 +18,17 @@ internal static class ChatOptionsMapper
     internal const string EphemeralKey = "codex:ephemeral";
     internal const string ProfileKey = "codex:profile";
     internal const string SkipGitRepoCheckKey = "codex:skip_git_repo_check";
+
+    internal static void ValidateGenerationOptions(ChatOptions? options)
+    {
+        if (options is { Temperature: not null } or { TopP: not null } or { TopK: not null } or
+            { MaxOutputTokens: not null } or { Seed: not null } or { FrequencyPenalty: not null } or
+            { PresencePenalty: not null } || options?.StopSequences is { Count: > 0 } ||
+            options?.ResponseFormat is { } format && format is not ChatResponseFormatText)
+        {
+            throw new NotSupportedException(GenerationOptionsUnsupportedMessage);
+        }
+    }
 
     internal static void ValidateFunctionCallingOptions(ChatOptions? chatOptions)
     {

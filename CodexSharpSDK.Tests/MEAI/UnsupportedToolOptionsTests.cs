@@ -25,6 +25,35 @@ public sealed class UnsupportedToolOptionsTests
     private const string NodeEvalArgument = "-e";
     private const string NodeMarkerScript = "require('node:fs').writeFileSync(process.argv[1], 'started');";
 
+    private const string GenerationStopSequence = "fixture stop";
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(4)]
+    [Arguments(5)]
+    [Arguments(6)]
+    [Arguments(7)]
+    [Arguments(8)]
+    public async Task ExplicitUnsupportedGenerationOptionsFailBeforeNativeExecution(int vector)
+    {
+        var options = vector switch
+        {
+            0 => new ChatOptions { Temperature = 0.5f },
+            1 => new ChatOptions { TopP = 0.5f },
+            2 => new ChatOptions { TopK = 1 },
+            3 => new ChatOptions { MaxOutputTokens = 1 },
+            4 => new ChatOptions { Seed = 1 },
+            5 => new ChatOptions { FrequencyPenalty = 0.5f },
+            6 => new ChatOptions { PresencePenalty = 0.5f },
+            7 => new ChatOptions { StopSequences = [GenerationStopSequence] },
+            _ => new ChatOptions { ResponseFormat = ChatResponseFormat.Json }
+        };
+        await AssertRejectedWithoutLaunchingAsync(options);
+    }
+
     [Test]
     public async Task NonemptyMeaiToolsAreRejectedBeforeLaunchingOrCreatingAThread()
     {
@@ -78,12 +107,8 @@ public sealed class UnsupportedToolOptionsTests
             await Assert.That(streamError).IsTypeOf<NotSupportedException>();
             await Assert.That(File.Exists(markerPath)).IsFalse();
 
-            var resumeOptions = new ChatOptions
-            {
-                ConversationId = EmptyConversationId,
-                Tools = options.Tools,
-                ToolMode = options.ToolMode,
-            };
+            var resumeOptions = options.Clone();
+            resumeOptions.ConversationId = EmptyConversationId;
             var resumeError = await Assert.That(async () =>
             {
                 _ = await client.GetResponseAsync(CreateMessages(), resumeOptions);

@@ -27,8 +27,9 @@ public sealed class CodexChatClient : IChatClient
     {
         ArgumentNullException.ThrowIfNull(messages);
         ChatOptionsMapper.ValidateFunctionCallingOptions(options);
+        ChatOptionsMapper.ValidateGenerationOptions(options);
 
-        var (prompt, imageContents) = ChatMessageMapper.ToCodexInput(messages);
+        var (prompt, imageContents) = ChatMessageMapper.ToCodexInput(messages, options?.Instructions);
         var threadOptions = ChatOptionsMapper.ToThreadOptions(options, _options);
         var turnOptions = ChatOptionsMapper.ToTurnOptions(options, cancellationToken);
 
@@ -51,8 +52,9 @@ public sealed class CodexChatClient : IChatClient
     {
         ArgumentNullException.ThrowIfNull(messages);
         ChatOptionsMapper.ValidateFunctionCallingOptions(options);
+        ChatOptionsMapper.ValidateGenerationOptions(options);
 
-        var (prompt, imageContents) = ChatMessageMapper.ToCodexInput(messages);
+        var (prompt, imageContents) = ChatMessageMapper.ToCodexInput(messages, options?.Instructions);
         var threadOptions = ChatOptionsMapper.ToThreadOptions(options, _options);
         var turnOptions = ChatOptionsMapper.ToTurnOptions(options, cancellationToken);
 
