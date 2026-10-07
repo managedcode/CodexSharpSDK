@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using ManagedCode.CodexSharpSDK.Models;
 
@@ -15,6 +16,134 @@ internal static class CliInstallationProcessRunner
     private const int ReadBufferSize = 4096;
 
     internal static async IAsyncEnumerable<CliInstallationUpdate> RunAsync(
+        CliLaunchCommand command,
+        IReadOnlyList<string> arguments,
+        IReadOnlyDictionary<string, string> environment,
+        string workingDirectory,
+        TimeSpan timeout,
+        TimeSpan terminationTimeout,
+        int maximumOutputCharacters,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var progress = Channel.CreateBounded<CliInstallationUpdate>(new BoundedChannelOptions(1)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+            SingleWriter = true
+        });
+        using var stopOwner = new CancellationTokenSource();
+        var started = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ownerTask = PumpProcessAsync(command, arguments, environment, workingDirectory, timeout,
+            terminationTimeout, maximumOutputCharacters, progress.Writer, started, cancellationToken,
+            stopOwner.Token);
+        var ownerFailureReported = false;
+        try
+        {
+            var startupFailure = await started.Task.ConfigureAwait(false);
+            if (startupFailure is not null)
+            {
+                ownerFailureReported = true;
+                ExceptionDispatchInfo.Capture(startupFailure).Throw();
+            }
+
+            yield return new CliInstallationUpdate(CliInstallationStage.PackageManagerStarted, 0, 0);
+            await foreach (var update in progress.Reader.ReadAllAsync(CancellationToken.None).ConfigureAwait(false))
+            {
+                yield return update;
+            }
+
+            var ownerFailure = await ownerTask.ConfigureAwait(false);
+            if (ownerFailure is not null)
+            {
+                ownerFailureReported = true;
+                ExceptionDispatchInfo.Capture(ownerFailure).Throw();
+            }
+        }
+        finally
+        {
+            stopOwner.Cancel();
+            var ownerFailure = await ownerTask.ConfigureAwait(false);
+            if (!ownerFailureReported && ownerFailure is not null)
+            {
+                ExceptionDispatchInfo.Capture(ownerFailure).Throw();
+            }
+        }
+    }
+
+    private static async Task<Exception?> PumpProcessAsync(
+        CliLaunchCommand command,
+        IReadOnlyList<string> arguments,
+        IReadOnlyDictionary<string, string> environment,
+        string workingDirectory,
+        TimeSpan timeout,
+        TimeSpan terminationTimeout,
+        int maximumOutputCharacters,
+        ChannelWriter<CliInstallationUpdate> progress,
+        TaskCompletionSource<Exception?> started,
+        CancellationToken cancellationToken,
+        CancellationToken stopToken)
+    {
+        using var ownerCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stopToken);
+        var processUpdates = RunProcessCoreAsync(command, arguments, environment, workingDirectory,
+            timeout, terminationTimeout, maximumOutputCharacters, ownerCancellation.Token).GetAsyncEnumerator();
+        var processStarted = false;
+        Exception? failure = null;
+        try
+        {
+            if (!await processUpdates.MoveNextAsync().ConfigureAwait(false))
+            {
+                throw new InvalidOperationException(StartFailedMessage);
+            }
+
+            processStarted = processUpdates.Current.Stage == CliInstallationStage.PackageManagerStarted;
+            if (!processStarted)
+            {
+                throw new InvalidOperationException(StartFailedMessage);
+            }
+
+            started.TrySetResult(null);
+            while (await processUpdates.MoveNextAsync().ConfigureAwait(false))
+            {
+                progress.TryWrite(processUpdates.Current);
+            }
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+            if (!processStarted)
+            {
+                started.TrySetResult(exception);
+            }
+        }
+        finally
+        {
+            try
+            {
+                await processUpdates.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception cleanupFailure)
+            {
+                failure = cleanupFailure;
+                if (!processStarted)
+                {
+                    started.TrySetResult(cleanupFailure);
+                }
+            }
+
+            progress.TryComplete();
+        }
+
+        if (stopToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested &&
+            failure is OperationCanceledException canceled && canceled.CancellationToken == ownerCancellation.Token)
+        {
+            failure = null;
+        }
+
+        return failure;
+    }
+
+    private static async IAsyncEnumerable<CliInstallationUpdate> RunProcessCoreAsync(
         CliLaunchCommand command,
         IReadOnlyList<string> arguments,
         IReadOnlyDictionary<string, string> environment,
@@ -53,6 +182,7 @@ internal static class CliInstallationProcessRunner
         var timeoutSignal = Task.Delay(Timeout.InfiniteTimeSpan, timeoutCancellation.Token);
         var stdoutTask = Task.CompletedTask;
         var stderrTask = Task.CompletedTask;
+        var lastObservedOutput = new OutputProgress(0, 0);
         try
         {
             process.StandardInput.Close();
@@ -61,12 +191,19 @@ internal static class CliInstallationProcessRunner
             stderrTask = DrainAsync(process.StandardError, maximumOutputCharacters, counts, false,
                 progress.Writer, readerCancellation.Token);
             yield return new CliInstallationUpdate(CliInstallationStage.PackageManagerStarted, 0, 0);
+            ThrowIfStopped(timeoutCancellation, cancellationToken);
             var progressReady = progress.Reader.WaitToReadAsync(CancellationToken.None).AsTask();
             var stdoutCompleted = false;
             var stderrCompleted = false;
             while (!exitTask.IsCompleted || !stdoutTask.IsCompleted || !stderrTask.IsCompleted)
             {
-                var pending = new List<Task> { exitTask, progressReady, callerCancellation, timeoutSignal };
+                ThrowIfStopped(timeoutCancellation, cancellationToken);
+                var pending = new List<Task> { progressReady, callerCancellation, timeoutSignal };
+                if (!exitTask.IsCompleted)
+                {
+                    pending.Add(exitTask);
+                }
+
                 if (!stdoutCompleted)
                 {
                     pending.Add(stdoutTask);
@@ -78,6 +215,7 @@ internal static class CliInstallationProcessRunner
                 }
 
                 var completed = await Task.WhenAny(pending).ConfigureAwait(false);
+                ThrowIfStopped(timeoutCancellation, cancellationToken);
                 if (completed == exitTask)
                 {
                     await exitTask.ConfigureAwait(false);
@@ -109,6 +247,8 @@ internal static class CliInstallationProcessRunner
                 {
                     yield return new CliInstallationUpdate(CliInstallationStage.OutputObserved,
                         output.StandardOutputCharacters, output.StandardErrorCharacters);
+                    lastObservedOutput = output;
+                    ThrowIfStopped(timeoutCancellation, cancellationToken);
                 }
 
                 progressReady = progress.Reader.WaitToReadAsync(CancellationToken.None).AsTask();
@@ -116,6 +256,14 @@ internal static class CliInstallationProcessRunner
 
             await exitTask.ConfigureAwait(false);
             await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+            var finalOutput = counts.Snapshot();
+            if (finalOutput != lastObservedOutput &&
+                (finalOutput.StandardOutputCharacters > 0 || finalOutput.StandardErrorCharacters > 0))
+            {
+                yield return new CliInstallationUpdate(CliInstallationStage.OutputObserved,
+                    finalOutput.StandardOutputCharacters, finalOutput.StandardErrorCharacters);
+            }
+
             if (process.ExitCode != 0)
             {
                 throw new InvalidOperationException(ExitFailedMessage);
@@ -123,9 +271,25 @@ internal static class CliInstallationProcessRunner
         }
         finally
         {
-            await StopAndJoinAsync(process, exitTask, stdoutTask, stderrTask,
-                readerCancellation, terminationTimeout).ConfigureAwait(false);
-            progress.Writer.TryComplete();
+            try
+            {
+                await StopAndJoinAsync(process, exitTask, stdoutTask, stderrTask,
+                    readerCancellation, terminationTimeout).ConfigureAwait(false);
+            }
+            finally
+            {
+                progress.Writer.TryComplete();
+            }
+        }
+    }
+
+    private static void ThrowIfStopped(CancellationTokenSource timeoutCancellation,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (timeoutCancellation.IsCancellationRequested)
+        {
+            throw new TimeoutException(TimeoutMessage);
         }
     }
 

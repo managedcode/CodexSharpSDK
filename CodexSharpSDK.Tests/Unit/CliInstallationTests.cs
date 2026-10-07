@@ -43,6 +43,7 @@ public sealed class CliInstallationTests
     private const string PipeHolderPidFileName = "pipe-holder.pid";
     private const string SetsidCommandName = "setsid";
     private const string CleanupMessage = "CLI installation process or output cleanup could not be confirmed within its configured timeout.";
+    private const string TimeoutMessage = "CLI installation exceeded its configured process timeout.";
     private const string DetachedPipeHolderSkipReason = "The detached pipe-holder cleanup fixture requires Linux setsid.";
     private const string SetsidRequiredMessage = "The detached pipe-holder cleanup fixture requires Linux setsid.";
     private const string OverflowMarkerName = "overflow";
@@ -94,6 +95,7 @@ public sealed class CliInstallationTests
             process.stdout.write('x'.repeat(8192));
             setInterval(() => {}, 1000);
         }
+        fs.writeFileSync(path.join(__dirname, 'child.pid'), String(process.pid));
         console.log('installation output');
         console.error('installation diagnostics');
         """;
@@ -158,6 +160,140 @@ public sealed class CliInstallationTests
         }
         finally
         {
+            DeleteFixture(fixture.FixtureRoot);
+        }
+    }
+
+    [Test]
+    public async Task InstallOrUpdate_ReportsFinalOutputWhenConsumerResumesAfterProcessExit()
+    {
+        var fixture = await CreateFixtureAsync();
+        try
+        {
+            await using var updates = CodexCliInstallation.InstallOrUpdateAsync(fixture.Options,
+                fixture.LocalApplicationDataRoot, CancellationToken.None).GetAsyncEnumerator();
+            await Assert.That(await updates.MoveNextAsync()).IsTrue();
+            await Assert.That(updates.Current.Stage).IsEqualTo(CliInstallationStage.PackageManagerStarted);
+            var childPidPath = Path.Combine(fixture.NpmRoot, BinDirectoryName, ChildPidFileName);
+            using var markerTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await WaitForFileAsync(childPidPath, markerTimeout.Token);
+            var childPid = int.Parse(await File.ReadAllTextAsync(childPidPath),
+                System.Globalization.CultureInfo.InvariantCulture);
+            await WaitForProcessExitAsync(childPid, markerTimeout.Token);
+
+            var sawFinalOutput = false;
+            var sawInstalled = false;
+            while (await updates.MoveNextAsync())
+            {
+                var update = updates.Current;
+                sawFinalOutput |= update.Stage == CliInstallationStage.OutputObserved &&
+                    update.StandardOutputCharactersObserved > 0 && update.StandardErrorCharactersObserved > 0;
+                sawInstalled |= update.Stage == CliInstallationStage.Installed && update.Result is not null;
+            }
+
+            await Assert.That(sawFinalOutput).IsTrue();
+            await Assert.That(sawInstalled).IsTrue();
+        }
+        finally
+        {
+            DeleteFixture(fixture.FixtureRoot);
+        }
+    }
+
+    [Test]
+    public async Task InstallOrUpdate_EnforcesTimeoutWhileConsumerIsPausedAfterStart()
+    {
+        var fixture = await CreateFixtureAsync();
+        await File.WriteAllTextAsync(Path.Combine(fixture.NpmRoot, BinDirectoryName, HangMarkerName), string.Empty);
+        var childPidPath = Path.Combine(fixture.NpmRoot, BinDirectoryName, ChildPidFileName);
+        try
+        {
+            var options = fixture.Options with
+            {
+                InstallTimeout = TimeSpan.FromSeconds(1),
+                ProcessTerminationTimeout = TimeSpan.FromSeconds(1)
+            };
+            await using var updates = CodexCliInstallation.InstallOrUpdateAsync(options,
+                fixture.LocalApplicationDataRoot, CancellationToken.None).GetAsyncEnumerator();
+            await Assert.That(await updates.MoveNextAsync()).IsTrue();
+            await Assert.That(updates.Current.Stage).IsEqualTo(CliInstallationStage.PackageManagerStarted);
+
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await WaitForFileAsync(childPidPath, deadline.Token);
+            var childPid = int.Parse(await File.ReadAllTextAsync(childPidPath),
+                System.Globalization.CultureInfo.InvariantCulture);
+            await WaitForProcessExitAsync(childPid, deadline.Token);
+            await Assert.That(IsProcessRunning(childPid)).IsFalse();
+
+            var exception = await Assert.That(async () =>
+            {
+                while (await updates.MoveNextAsync())
+                {
+                }
+            }).ThrowsException();
+            await Assert.That(exception).IsTypeOf<TimeoutException>();
+            await Assert.That(exception!.Message).IsEqualTo(TimeoutMessage);
+        }
+        finally
+        {
+            DeleteFixture(fixture.FixtureRoot);
+        }
+    }
+
+    [Test]
+    public async Task InstallOrUpdate_ExitedRootWithDetachedPipeHolderSurfacesBoundedCleanupFailure()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test(DetachedPipeHolderSkipReason);
+            return;
+        }
+
+        var fixture = await CreateFixtureAsync();
+        var holderPidFile = Path.Combine(fixture.NpmRoot, BinDirectoryName, PipeHolderPidFileName);
+        var rootPidFile = Path.Combine(fixture.NpmRoot, BinDirectoryName, ChildPidFileName);
+        var holderPid = 0;
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(fixture.NpmRoot, BinDirectoryName, PipeHolderMarkerName),
+                string.Empty);
+            var options = fixture.Options with
+            {
+                InstallTimeout = TimeSpan.FromSeconds(2),
+                ProcessTerminationTimeout = TimeSpan.FromSeconds(1)
+            };
+            await using var updates = CodexCliInstallation.InstallOrUpdateAsync(options,
+                fixture.LocalApplicationDataRoot, CancellationToken.None).GetAsyncEnumerator();
+            await Assert.That(await updates.MoveNextAsync()).IsTrue();
+            using var markerTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await WaitForFileAsync(rootPidFile, markerTimeout.Token);
+            await WaitForFileAsync(holderPidFile, markerTimeout.Token);
+            var rootPid = int.Parse(await File.ReadAllTextAsync(rootPidFile),
+                System.Globalization.CultureInfo.InvariantCulture);
+            holderPid = int.Parse(await File.ReadAllTextAsync(holderPidFile),
+                System.Globalization.CultureInfo.InvariantCulture);
+            await WaitForProcessExitAsync(rootPid, markerTimeout.Token);
+            await Assert.That(IsProcessRunning(rootPid)).IsFalse();
+            await Assert.That(IsProcessRunning(holderPid)).IsTrue();
+
+            var exception = await Assert.That(async () =>
+            {
+                while (await updates.MoveNextAsync())
+                {
+                }
+            }).ThrowsException();
+            await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+            await Assert.That(exception!.Message).IsEqualTo(CleanupMessage);
+            await Assert.That(IsProcessRunning(rootPid)).IsFalse();
+            await Assert.That(IsProcessRunning(holderPid)).IsTrue();
+        }
+        finally
+        {
+            if (holderPid > 0)
+            {
+                StopProcess(holderPid);
+            }
+
             DeleteFixture(fixture.FixtureRoot);
         }
     }
@@ -379,6 +515,19 @@ public sealed class CliInstallationTests
         while (!File.Exists(path))
         {
             await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
+        }
+    }
+
+    private static async Task WaitForProcessExitAsync(int processId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            await process.WaitForExitAsync(cancellationToken);
+        }
+        catch (ArgumentException)
+        {
+            return;
         }
     }
 
