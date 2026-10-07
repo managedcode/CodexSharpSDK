@@ -155,10 +155,10 @@ jobs:
 
           cli_changed_files="$(printf '%s\n' "$changed_files" | grep -E '^(codex-rs/|docs/|README\.md|CHANGELOG\.md|Cargo\.toml|Cargo\.lock|package\.json)' || true)"
           if [ -z "$cli_changed_files" ]; then
-            cli_changed_files="$(printf '%s\n' "$changed_files" | head -n 200)"
+            cli_changed_files="$(printf '%s\n' "$changed_files" | sed -n '1,200p')"
           fi
 
-          commits="$(git -C "$SUBMODULE_PATH" log --no-merges --date=short --pretty=format:'- %h %s (%ad)' "$current_sha..$latest_sha" | head -n 100)"
+          commits="$(git -C "$SUBMODULE_PATH" log --no-merges --max-count=100 --date=short --pretty=format:'- %h %s (%ad)' "$current_sha..$latest_sha")"
           if [ -z "$commits" ]; then
             commits='- No commit summary available.'
           fi

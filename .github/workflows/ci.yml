@@ -38,7 +38,16 @@ jobs:
       - name: Install Codex CLI
         shell: bash
         run: |
-          npm install --no-save @openai/codex
+          set -euo pipefail
+          target_version="$(sed -nE 's/^[[:space:]]*public const string TargetVersion = "([0-9]+\.[0-9]+\.[0-9]+)";$/\1/p' CodexSharpSDK/Models/CodexCliCompatibility.cs)"
+          [[ -n "$target_version" && "$target_version" != *$'\n'* ]] || { echo "Expected exactly one three-part Codex CLI TargetVersion."; exit 1; }
+          npm install --no-save "@openai/codex@$target_version"
+          export PATH="$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
+          version="$(codex --version)"
+          printf '%s\n' "$version"
+          actual_version="$(printf '%s\n' "$version" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sed -n '1p')"
+          printf 'Installed Codex CLI version: %s\n' "$actual_version"
+          [[ "$actual_version" == "$target_version" ]]
           echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Restore
