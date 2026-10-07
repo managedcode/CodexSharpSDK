@@ -122,6 +122,21 @@ internal static class CodexCliLocator
             return false;
         }
 
+        return TryResolveNpmInstalledBinary(EnumerateSearchRoots(), targetTriple, OperatingSystem.IsWindows(), out binaryPath);
+    }
+
+    internal static string? GetCurrentTargetTriple() => GetTargetTriple();
+
+    internal static bool TryResolveNpmInstalledBinary(
+        IEnumerable<string> searchRoots,
+        string targetTriple,
+        bool isWindows,
+        out string binaryPath)
+    {
+        ArgumentNullException.ThrowIfNull(searchRoots);
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetTriple);
+        binaryPath = string.Empty;
+
         if (!PlatformPackageByTarget.TryGetValue(targetTriple, out var packageName))
         {
             return false;
@@ -133,9 +148,9 @@ internal static class CodexCliLocator
         }
 
         var packageDirectory = packageName[NpmScopePrefix.Length..];
-        var executableName = OperatingSystem.IsWindows() ? CodexWindowsExecutableName : CodexExecutableName;
+        var executableName = isWindows ? CodexWindowsExecutableName : CodexExecutableName;
 
-        foreach (var root in EnumerateSearchRoots())
+        foreach (var root in searchRoots)
         {
             var primaryPath = Path.Combine(
                 root,

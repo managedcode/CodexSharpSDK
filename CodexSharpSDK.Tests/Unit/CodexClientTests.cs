@@ -10,13 +10,18 @@ namespace ManagedCode.CodexSharpSDK.Tests.Unit;
 
 public class CodexClientTests
 {
-    private const string NpmFixtureSkipReason = "The npm.cmd invocation fixture is Windows-specific.";
+    private const string NpmFixtureSkipReason = "The npm shim launch fixture requires Windows and an installed Node.js runtime.";
     private const string NpmFixtureDirectoryPrefix = "CodexNpmProbe-";
     private const string NpmFixtureScriptFileName = "npm.cmd";
     private const string NpmFixtureArgumentsFileName = "npm-arguments.txt";
     private const string NpmFixtureVersionOutput = "99.0.0";
     private const string NpmFixtureExpectedArguments = "view @openai/codex version --silent";
-    private const string NpmFixtureScriptContent = "@echo off\r\necho %*>> \"%SDK_NPM_ARGS_FILE%\"\r\necho " + NpmFixtureVersionOutput + "\r\n";
+    private const string NpmFixturePackageName = "npm";
+    private const string NpmFixtureScriptRelativePath = "bin/npm-cli.js";
+    private const string NpmFixtureScriptContent = "const fs = require('node:fs');\n" +
+        "fs.writeFileSync(process.env.SDK_NPM_ARGS_FILE, process.argv.slice(2).join(' '));\n" +
+        "console.log('" + NpmFixtureVersionOutput + "');\n";
+    private const string NpmFixtureShimContent = "@ECHO off\r\nexit /b 91\r\n";
     private const string NpmArgumentsEnvironmentVariable = "SDK_NPM_ARGS_FILE";
     private const string SystemRootEnvironmentVariable = "SystemRoot";
     private const string CodexHomeEnvironmentVariable = "CODEX_HOME";
@@ -505,7 +510,32 @@ public class CodexClientTests
     }
 
     [Test]
-    public async Task CodexCli_UpdateStatus_InvokesScopedNpmPackageThroughWindowsCommandProcessor()
+    public async Task CodexOptions_LaunchResolutionDoesNotUseAmbientBundledInstallWhenEnvironmentIsIsolated()
+    {
+        var sandbox = CreateMetadataSandbox();
+        try
+        {
+            var options = new CodexOptions
+            {
+                InheritEnvironmentVariables = false,
+                EnvironmentVariables = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    [PathEnvironmentVariable] = sandbox,
+                },
+            };
+
+            var exception = await Assert.That(() => options.GetCliLaunchCommand()).ThrowsException();
+
+            await Assert.That(exception).IsTypeOf<FileNotFoundException>();
+        }
+        finally
+        {
+            Directory.Delete(sandbox, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task CodexCli_UpdateStatus_InvokesValidatedNpmPackageThroughNode()
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -518,17 +548,23 @@ public class CodexClientTests
         Directory.CreateDirectory(sandbox);
         var npmScriptPath = Path.Combine(sandbox, NpmFixtureScriptFileName);
         var argumentsPath = Path.Combine(sandbox, NpmFixtureArgumentsFileName);
+        var nodePath = FindNodeExecutable();
+        var npmCliPath = Path.Combine(sandbox, "node_modules", NpmFixturePackageName,
+            NpmFixtureScriptRelativePath.Replace('/', Path.DirectorySeparatorChar));
         try
         {
-            File.WriteAllText(npmScriptPath, NpmFixtureScriptContent);
+            File.WriteAllText(npmScriptPath, NpmFixtureShimContent);
+            Directory.CreateDirectory(Path.GetDirectoryName(npmCliPath)!);
+            File.WriteAllText(Path.Combine(sandbox, "node_modules", NpmFixturePackageName, "package.json"),
+                "{\"name\":\"" + NpmFixturePackageName + "\",\"bin\":{\"npm\":\"" + NpmFixtureScriptRelativePath + "\"}}");
+            File.WriteAllText(npmCliPath, NpmFixtureScriptContent);
             using var client = new CodexClient(new CodexOptions
             {
                 CodexExecutablePath = CodexCliLocator.FindCodexPath(null),
                 InheritEnvironmentVariables = false,
                 EnvironmentVariables = new Dictionary<string, string>(StringComparer.Ordinal)
                 {
-                    [PathEnvironmentVariable] = string.Concat(sandbox, Path.PathSeparator,
-                        Environment.GetEnvironmentVariable(PathEnvironmentVariable)),
+                    [PathEnvironmentVariable] = string.Join(Path.PathSeparator, sandbox, Path.GetDirectoryName(nodePath)),
                     [SystemRootEnvironmentVariable] = Environment.GetEnvironmentVariable(SystemRootEnvironmentVariable) ?? string.Empty,
                     [NpmArgumentsEnvironmentVariable] = argumentsPath,
                 },
@@ -544,6 +580,21 @@ public class CodexClientTests
         {
             Directory.Delete(sandbox, recursive: true);
         }
+    }
+
+    private static string FindNodeExecutable()
+    {
+        foreach (var entry in (Environment.GetEnvironmentVariable(PathEnvironmentVariable) ?? string.Empty)
+                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var candidate = Path.Combine(entry.Trim('"'), "node.exe");
+            if (File.Exists(candidate))
+            {
+                return Path.GetFullPath(candidate);
+            }
+        }
+
+        throw new InvalidOperationException("Node.js must be available on PATH for this Windows CLI metadata regression.");
     }
 
     private static CodexClient CreateMetadataClient(

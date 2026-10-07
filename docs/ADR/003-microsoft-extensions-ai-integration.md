@@ -15,7 +15,7 @@ Implement `IChatClient` from `Microsoft.Extensions.AI.Abstractions` in a **separ
 
 1. **Separate package** — Core SDK remains M.E.AI-free. The adapter is opt-in, following the pattern of `Microsoft.Extensions.AI.OpenAI` being separate from `OpenAI`.
 
-2. **Custom AIContent types** — Rich Codex items (command execution, file changes, MCP tool calls, web searches, multi-agent collaboration) are surfaced as typed `AIContent` subclasses rather than being flattened to text. This preserves full fidelity of Codex output.
+2. **Safe activity metadata alongside typed results** — Completed native command, file-change, MCP, web-search, and collaboration items retain their established typed MEAI content and gain fixed `ChatResponseUpdate.AdditionalProperties` categories and phases. Started/updated events may contain only safe metadata. The adapter does not turn these into consumer-invocable MEAI functions; typed payload fields remain available to SDK consumers, while Prostir reads only the safe categories and does not print raw native fields.
 
 3. **Codex-specific options via AdditionalProperties** — Standard `ChatOptions` properties (`ModelId`, `ConversationId`) map directly. Codex-unique features use `codex:*` prefixed keys in `ChatOptions.AdditionalProperties` (e.g., `codex:sandbox_mode`, `codex:reasoning_effort`).
 
@@ -54,7 +54,7 @@ flowchart LR
 
 - SDK participates in .NET AI ecosystem: DI registration, middleware pipelines, provider swapping.
 - Consumers get logging, caching, and telemetry for free via M.E.AI middleware.
-- Rich Codex items preserved as typed content, not lost.
+- Native activity categories remain observable without exposing command, path, tool-argument, result, or collaboration details in streaming content.
 
 ### Negative
 
@@ -70,5 +70,5 @@ flowchart LR
 ## Alternatives considered
 
 - Implement `IChatClient` directly in core SDK: rejected to avoid mandatory M.E.AI dependency.
-- Flatten all Codex items to `TextContent`: rejected to preserve rich output fidelity.
+- Flatten native Codex activity into `TextContent`: rejected because the adapter can expose safe categories as metadata while keeping assistant text separate.
 - Map Codex commands/file changes as `FunctionCallContent`: rejected because tools are internal to CLI, not consumer-invocable.

@@ -1,10 +1,12 @@
 using System.Text.Json.Nodes;
+using ManagedCode.CodexSharpSDK.Internal;
 using Microsoft.Extensions.Logging;
 
 namespace ManagedCode.CodexSharpSDK.Configuration;
 
 public sealed record CodexOptions
 {
+    private const string PathEnvironmentVariable = "PATH";
     public static TimeSpan DefaultProcessTerminationTimeout { get; } = TimeSpan.FromSeconds(5);
 
     public static TimeSpan DefaultCliMetadataProbeTimeout { get; } = TimeSpan.FromSeconds(10);
@@ -42,4 +44,31 @@ public sealed record CodexOptions
     public int MaximumProcessOutputCharacters { get; init; } = DefaultMaximumProcessOutputCharacters;
 
     public ILogger? Logger { get; init; }
+
+    /// <summary>Resolves the installed CLI to an executable and safe literal prefix arguments.</summary>
+    public ManagedCode.CodexSharpSDK.Models.CliLaunchCommand GetCliLaunchCommand()
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(CliMetadataMaximumFileCharacters);
+        return CliLaunchCommandResolver.Resolve(CodexExecutablePath, GetEffectivePath(), CliMetadataMaximumFileCharacters);
+    }
+
+    internal string? GetEffectivePath()
+    {
+        if (EnvironmentVariables is not null)
+        {
+            foreach (var (key, value) in EnvironmentVariables)
+            {
+                if (string.Equals(key, PathEnvironmentVariable, OperatingSystem.IsWindows()
+                        ? StringComparison.OrdinalIgnoreCase
+                        : StringComparison.Ordinal))
+                {
+                    return value;
+                }
+            }
+        }
+
+        return (InheritEnvironmentVariables ?? EnvironmentVariables is null)
+            ? Environment.GetEnvironmentVariable(PathEnvironmentVariable)
+            : null;
+    }
 }

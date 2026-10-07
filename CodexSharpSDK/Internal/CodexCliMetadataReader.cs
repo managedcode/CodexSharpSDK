@@ -15,15 +15,11 @@ internal static class CodexCliMetadataReader
     private static readonly TimeSpan DefaultProbeTimeout = TimeSpan.FromSeconds(10);
     private const int DefaultMaximumOutputCharacters = 65536;
     private static readonly IReadOnlyDictionary<string, string> EmptyEnvironment = new Dictionary<string, string>(StringComparer.Ordinal);
-    private const string NpmExecutableName = "npm";
-    private const string NpmWindowsScriptName = "npm.cmd";
-    private const string WindowsCommandProcessorName = "cmd.exe";
-    private const string WindowsCommandDisableAutoRunFlag = "/d";
-    private const string WindowsCommandFlag = "/c";
     private const string NpmViewCommand = "view";
     private const string NpmPackageName = "@openai/codex";
     private const string NpmVersionProperty = "version";
     private const string NpmSilentFlag = "--silent";
+    private const string PathEnvironmentVariable = "PATH";
     private const string NpmGlobalUpdateCommand = "npm install --global @openai/codex@latest";
     private const string BunGlobalUpdateCommand = "bun add --global @openai/codex@latest";
     private const string NpmUserAgentEnvironmentVariable = "npm_config_user_agent";
@@ -69,12 +65,23 @@ internal static class CodexCliMetadataReader
         int maximumOutputCharacters,
         int maximumFileCharacters = CodexOptions.DefaultCliMetadataMaximumFileCharacters,
         TimeSpan? probeLeaseTimeout = null)
+        => Read(new CliLaunchCommand(Path.GetFullPath(executablePath), System.Collections.Immutable.ImmutableArray<string>.Empty), environment, inheritEnvironmentVariables,
+            probeTimeout, maximumOutputCharacters, maximumFileCharacters, probeLeaseTimeout);
+
+    public static CodexCliMetadata Read(
+        CliLaunchCommand launchCommand,
+        IReadOnlyDictionary<string, string> environment,
+        bool inheritEnvironmentVariables,
+        TimeSpan probeTimeout,
+        int maximumOutputCharacters,
+        int maximumFileCharacters = CodexOptions.DefaultCliMetadataMaximumFileCharacters,
+        TimeSpan? probeLeaseTimeout = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
+        ArgumentNullException.ThrowIfNull(launchCommand);
         ArgumentNullException.ThrowIfNull(environment);
         var leaseTimeout = probeLeaseTimeout ?? CodexOptions.DefaultCliMetadataProbeLeaseTimeout;
 
-        var installedVersion = ReadInstalledVersion(executablePath, environment, inheritEnvironmentVariables,
+        var installedVersion = ReadInstalledVersion(launchCommand, environment, inheritEnvironmentVariables,
             probeTimeout, maximumOutputCharacters, leaseTimeout);
         var codexHome = ResolveCodexHome(environment, inheritEnvironmentVariables);
         if (string.IsNullOrWhiteSpace(codexHome))
@@ -98,15 +105,26 @@ internal static class CodexCliMetadataReader
         TimeSpan probeTimeout,
         int maximumOutputCharacters,
         TimeSpan? probeLeaseTimeout = null)
+        => ReadUpdateStatus(new CliLaunchCommand(Path.GetFullPath(executablePath), System.Collections.Immutable.ImmutableArray<string>.Empty), environment,
+            inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters, probeLeaseTimeout);
+
+    public static CodexCliUpdateStatus ReadUpdateStatus(
+        CliLaunchCommand launchCommand,
+        IReadOnlyDictionary<string, string> environment,
+        bool inheritEnvironmentVariables,
+        TimeSpan probeTimeout,
+        int maximumOutputCharacters,
+        TimeSpan? probeLeaseTimeout = null,
+        int maximumFileCharacters = CodexOptions.DefaultCliMetadataMaximumFileCharacters)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
+        ArgumentNullException.ThrowIfNull(launchCommand);
         ArgumentNullException.ThrowIfNull(environment);
         var leaseTimeout = probeLeaseTimeout ?? CodexOptions.DefaultCliMetadataProbeLeaseTimeout;
 
-        var installedVersion = ReadInstalledVersion(executablePath, environment, inheritEnvironmentVariables,
+        var installedVersion = ReadInstalledVersion(launchCommand, environment, inheritEnvironmentVariables,
             probeTimeout, maximumOutputCharacters, leaseTimeout);
         var probe = ProbeLatestPublishedVersion(environment, inheritEnvironmentVariables, probeTimeout,
-            maximumOutputCharacters, leaseTimeout);
+            maximumOutputCharacters, leaseTimeout, maximumFileCharacters);
         if (!string.IsNullOrWhiteSpace(probe.ErrorMessage))
         {
             var failureMessage = $"{UpdateCheckFailedMessagePrefix} {probe.ErrorMessage}";
@@ -124,7 +142,7 @@ internal static class CodexCliMetadataReader
             return new CodexCliUpdateStatus(installedVersion, probe.LatestVersion, false, null, null);
         }
 
-        var updateCommand = ResolveUpdateCommand(executablePath,
+        var updateCommand = ResolveUpdateCommand(launchCommand.ExecutablePath,
             environment.GetValueOrDefault(NpmUserAgentEnvironmentVariable),
             environment.GetValueOrDefault(BunInstallEnvironmentVariable),
             inheritEnvironmentVariables);
@@ -329,14 +347,14 @@ internal static class CodexCliMetadataReader
     }
 
     private static string ReadInstalledVersion(
-        string executablePath,
+        CliLaunchCommand launchCommand,
         IReadOnlyDictionary<string, string> environment,
         bool inheritEnvironmentVariables,
         TimeSpan probeTimeout,
         int maximumOutputCharacters,
         TimeSpan leaseTimeout)
     {
-        var probe = BoundedCliProcessProbe.Run(executablePath, [VersionFlag], environment,
+        var probe = BoundedCliProcessProbe.Run(launchCommand, [VersionFlag], environment,
             inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters,
             leaseAcquisitionTimeout: leaseTimeout);
         if (probe.ExitCode != 0)
@@ -362,12 +380,13 @@ internal static class CodexCliMetadataReader
         bool inheritEnvironmentVariables,
         TimeSpan probeTimeout,
         int maximumOutputCharacters,
-        TimeSpan leaseTimeout)
+        TimeSpan leaseTimeout,
+        int maximumFileCharacters)
     {
         try
         {
             var result = RunNpmVersionProbe(environment, inheritEnvironmentVariables,
-                probeTimeout, maximumOutputCharacters, leaseTimeout);
+                probeTimeout, maximumOutputCharacters, leaseTimeout, maximumFileCharacters);
             if (result.ExitCode != 0)
             {
                 return LatestVersionProbe.WithError(ProbeFailureMessage);
@@ -389,22 +408,30 @@ internal static class CodexCliMetadataReader
         bool inheritEnvironmentVariables,
         TimeSpan probeTimeout,
         int maximumOutputCharacters,
-        TimeSpan leaseTimeout)
+        TimeSpan leaseTimeout,
+        int maximumFileCharacters)
     {
         var npmArguments = new[] { NpmViewCommand, NpmPackageName, NpmVersionProperty, NpmSilentFlag };
-        if (!OperatingSystem.IsWindows())
+        var pathVariable = ResolveEffectivePath(environment, inheritEnvironmentVariables);
+        var launchCommand = CliLaunchCommandResolver.ResolveNpm(pathVariable, maximumFileCharacters);
+        return BoundedCliProcessProbe.Run(launchCommand, npmArguments, environment,
+            inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters,
+            leaseAcquisitionTimeout: leaseTimeout);
+    }
+
+    private static string? ResolveEffectivePath(IReadOnlyDictionary<string, string> environment, bool inheritEnvironmentVariables)
+    {
+        foreach (var (key, value) in environment)
         {
-            return BoundedCliProcessProbe.Run(NpmExecutableName, npmArguments, environment,
-                inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters,
-                leaseAcquisitionTimeout: leaseTimeout);
+            if (string.Equals(key, PathEnvironmentVariable, OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal))
+            {
+                return value;
+            }
         }
 
-        var commandProcessor = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
-            WindowsCommandProcessorName);
-        return BoundedCliProcessProbe.Run(commandProcessor,
-            [WindowsCommandDisableAutoRunFlag, WindowsCommandFlag, NpmWindowsScriptName, .. npmArguments],
-            environment, inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters,
-            leaseAcquisitionTimeout: leaseTimeout);
+        return inheritEnvironmentVariables ? Environment.GetEnvironmentVariable(PathEnvironmentVariable) : null;
     }
 
     private static string ResolveCodexHome(

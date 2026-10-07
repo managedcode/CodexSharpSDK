@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using ManagedCode.CodexSharpSDK.Models;
 
 namespace ManagedCode.CodexSharpSDK.Internal;
 
@@ -47,8 +48,20 @@ internal static class BoundedCliProcessProbe
         int maximumOutputCharacters,
         Action<int>? readerCountChanged = null,
         TimeSpan? leaseAcquisitionTimeout = null)
+        => Run(new CliLaunchCommand(Path.GetFullPath(executablePath), System.Collections.Immutable.ImmutableArray<string>.Empty), arguments, environment,
+            inheritEnvironmentVariables, timeout, maximumOutputCharacters, readerCountChanged, leaseAcquisitionTimeout);
+
+    public static CliProcessProbeResult Run(
+        CliLaunchCommand launchCommand,
+        IReadOnlyList<string> arguments,
+        IReadOnlyDictionary<string, string>? environment,
+        bool inheritEnvironmentVariables,
+        TimeSpan timeout,
+        int maximumOutputCharacters,
+        Action<int>? readerCountChanged = null,
+        TimeSpan? leaseAcquisitionTimeout = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
+        ArgumentNullException.ThrowIfNull(launchCommand);
         ArgumentNullException.ThrowIfNull(arguments);
         if (timeout <= TimeSpan.Zero)
         {
@@ -63,7 +76,7 @@ internal static class BoundedCliProcessProbe
         var timeoutMilliseconds = GetTimeoutMilliseconds(timeout);
         var leaseTimeoutMilliseconds = GetTimeoutMilliseconds(leaseAcquisitionTimeout ?? timeout);
         using var probeGateLease = ProbeGateLease.Acquire(leaseTimeoutMilliseconds);
-        var startInfo = new ProcessStartInfo(executablePath)
+        var startInfo = new ProcessStartInfo(launchCommand.ExecutablePath)
         {
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -85,6 +98,11 @@ internal static class BoundedCliProcessProbe
         }
 
         using var process = new Process { StartInfo = startInfo };
+        foreach (var argument in launchCommand.PrefixArguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
         foreach (var argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);

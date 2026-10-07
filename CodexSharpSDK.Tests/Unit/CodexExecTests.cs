@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using ManagedCode.CodexSharpSDK.Client;
 using ManagedCode.CodexSharpSDK.Execution;
@@ -14,9 +15,10 @@ public class CodexExecTests
 {
     private const string LongRunningCliScript = "#!/bin/sh\necho $$\nexec /bin/sleep 30\n";
     private const string DescendantHoldingStderrScript = "/usr/bin/setsid /bin/sleep 30 >&2 & echo $!; exit 0";
+    private const string DescendantHoldingStdoutScript = "/usr/bin/setsid /bin/sleep 30 2>/dev/null & echo $!; exit 0";
     private const string DescendantHoldingStderrWhileParentRunsScript =
-        "/usr/bin/setsid /bin/sleep 30 >&2 & echo $!; exec /bin/sleep 30";
-    private const string WindowsDuplexStdinCommandTemplate = "$pressure = 'o' * {0}; [Console]::Out.WriteLine($pressure); [Console]::Out.Flush(); [Console]::Error.WriteLine(('e' * {0})); [Console]::Error.Flush(); $prompt = [Console]::In.ReadToEnd(); [Console]::Out.Write($prompt); [Console]::Out.WriteLine(\"stdin-length:$($prompt.Length)\"); [Console]::Out.WriteLine('stdin-eof')";
+        "/usr/bin/setsid /bin/sh -c '/usr/bin/setsid /bin/sleep 30 >&2 & echo $!; exit 0' & exec /bin/sleep 30";
+    private const string WindowsDuplexStdinCommandTemplate = "$pressure = 'o' * {0}; [Console]::Out.WriteLine($pressure); [Console]::Out.Flush(); [Console]::Error.WriteLine(('e' * {0})); [Console]::Error.Flush(); $prompt = [Console]::In.ReadToEnd(); [Console]::Out.WriteLine($prompt); [Console]::Out.WriteLine(\"stdin-length:$($prompt.Length)\"); [Console]::Out.WriteLine('stdin-eof')";
     private const string PosixDuplexStdinScriptTemplate = "head -c {0} /dev/zero | tr '\\000' 'o'; printf '\\n'; head -c {0} /dev/zero | tr '\\000' 'e' >&2; printf '\\n' >&2; prompt=$(cat); printf '%s\\n' \"$prompt\"; printf 'stdin-length:%s\\n' \"${#prompt}\"; printf 'stdin-eof\\n'";
     private const string DuplexPressureTemplatePlaceholder = "{0}";
     private const string PosixFixtureSkipReason = "The public CLI yield-boundary fixture currently uses a POSIX executable script.";
@@ -27,6 +29,7 @@ public class CodexExecTests
     private const string PosixMultiLineOverflowCommand = "printf '1234567890\\n1234567890\\n1234567890\\n'";
     private const string PosixStandardErrorPressureCommand = "printf '%100s' x >&2; exec /bin/sleep 30";
     private const string PosixNormalMultiLineCommand = "printf 'first\\nsecond\\n'";
+    private const string PosixNonZeroExitBeforeInputCommand = "printf 'provider failed\\n' >&2; /bin/sleep 0.1; exit 23";
     private const string WindowsPowerShellPath = "powershell.exe";
     private const string WindowsNoProfileFlag = "-NoProfile";
     private const string WindowsNonInteractiveFlag = "-NonInteractive";
@@ -35,6 +38,7 @@ public class CodexExecTests
     private const string WindowsMultiLineOverflowCommand = "Write-Output '1234567890'; Write-Output '1234567890'; Write-Output '1234567890'";
     private const string WindowsStandardErrorPressureCommand = "[Console]::Error.Write('x' * 100); Start-Sleep -Seconds 30";
     private const string WindowsNormalMultiLineCommand = "Write-Output 'first'; Write-Output 'second'";
+    private const string WindowsNonZeroExitBeforeInputCommand = "[Console]::Error.WriteLine('provider failed'); Start-Sleep -Milliseconds 100; exit 23";
     private const string ExpectedFirstLine = "first";
     private const string ExpectedSecondLine = "second";
     private const int SmallOutputLimitCharacters = 64;
@@ -42,12 +46,57 @@ public class CodexExecTests
     private const int DuplexPipePressureCharacters = 131072;
     private const int DuplexPromptCharacters = 262144;
     private const int DuplexMaximumProcessOutputCharacters = 1048576;
+    private const char PromptCharacter = 'p';
     private static readonly TimeSpan ProcessOutputCleanupAssertionBound = TimeSpan.FromSeconds(8);
     private const string TestInput = "test";
     private const string CancellationScriptFileName = "codex-cancel.sh";
-    private const string MissingExecutableNamePrefix = "missing-codex-cli-";
     private const string PosixShellPath = "/bin/sh";
     private const string PosixShellCommandFlag = "-c";
+    private const string NodeExecutableName = "node";
+    private const string PathEnvironmentVariable = "PATH";
+    private const string NodeLaunchSkipReason = "This Node.js launch regression uses Unix executable naming.";
+    private const string JavaScriptFixtureName = "codex-cli-fixture.js";
+    private const string TestDirectoryName = "tests";
+    private const string SandboxDirectoryName = ".sandbox";
+    private const string JavaScriptInputPropertyName = "input";
+    private const string JavaScriptArgumentsPropertyName = "args";
+    private const string NodeExecutableMissingMessage = "Node.js was not found on PATH.";
+    private const string JavaScriptFixtureSource = "let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>input+=chunk);process.stdin.on('end',()=>process.stdout.write(JSON.stringify({input,args:process.argv.slice(2)})+'\\n'));";
+    private const string JavaScriptPromptPrefix = "--yolo \"literal\" & metacharacters ";
+    private const int JavaScriptPromptLength = 262144;
+
+    [Test]
+    public async Task PublicExec_LaunchesExplicitJavaScriptThroughRuntimeOnUnix()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip.Test(NodeLaunchSkipReason);
+            return;
+        }
+
+        var sandboxDirectory = CreateSandboxDirectory();
+        var nodePath = FindExecutableInPath(NodeExecutableName);
+        var scriptPath = Path.Combine(sandboxDirectory, JavaScriptFixtureName);
+        var prompt = string.Concat(JavaScriptPromptPrefix, new string('p', JavaScriptPromptLength));
+        await File.WriteAllTextAsync(scriptPath, JavaScriptFixtureSource);
+
+        try
+        {
+            using var exec = new CodexExec(scriptPath, new Dictionary<string, string>
+            {
+                [PathEnvironmentVariable] = Path.GetDirectoryName(nodePath)!,
+            });
+            var lines = await DrainToListAsync(exec.RunAsync(new CodexExecArgs { Input = prompt }));
+            await Assert.That(lines).Count().IsEqualTo(1);
+            using var document = JsonDocument.Parse(lines[0]);
+            await Assert.That(document.RootElement.GetProperty(JavaScriptInputPropertyName).GetString()).IsEqualTo(prompt);
+            await Assert.That(document.RootElement.GetProperty(JavaScriptArgumentsPropertyName).GetArrayLength()).IsGreaterThan(0);
+        }
+        finally
+        {
+            Directory.Delete(sandboxDirectory, recursive: true);
+        }
+    }
 
     [Test]
     public async Task DefaultProcessRunner_DrainsBothOutputPipesWhileWritingLargePrompt()
@@ -258,30 +307,21 @@ public class CodexExecTests
     [Test]
     public async Task PublicExec_PreCanceledTokenDoesNotStartCliProcess()
     {
-        var sandboxDirectory = CreateSandboxDirectory();
-        var executablePath = Path.Combine(sandboxDirectory, $"{MissingExecutableNamePrefix}{Guid.NewGuid():N}");
+        var executablePath = Environment.ProcessPath!;
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         using var exec = new CodexExec(TimeSpan.FromSeconds(5), executablePath, CreateProcessEnvironment());
 
-        try
+        await using var enumerator = exec.RunAsync(new CodexExecArgs
         {
-            await using var enumerator = exec.RunAsync(new CodexExecArgs
-            {
-                Input = TestInput,
-                CancellationToken = cancellation.Token,
-            }).GetAsyncEnumerator(cancellation.Token);
+            Input = TestInput,
+            CancellationToken = cancellation.Token,
+        }).GetAsyncEnumerator(cancellation.Token);
 
-            var action = async () => await enumerator.MoveNextAsync();
-            var exception = await Assert.That(action).ThrowsException();
+        var action = async () => await enumerator.MoveNextAsync();
+        var exception = await Assert.That(action).ThrowsException();
 
-            await Assert.That(exception).IsTypeOf<OperationCanceledException>();
-        }
-        finally
-        {
-            // The intentionally missing executable proves cancellation is observed before process start.
-            Directory.Delete(sandboxDirectory, recursive: true);
-        }
+        await Assert.That(exception).IsTypeOf<OperationCanceledException>();
     }
 
     [Test]
@@ -324,6 +364,55 @@ public class CodexExecTests
             await Assert.That(stopwatch.Elapsed < TimeSpan.FromSeconds(2)).IsTrue();
             await standardOutputReadCompleted.Task.WaitAsync(TimeSpan.FromSeconds(1));
             await standardErrorReaderCompleted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            try
+            {
+                using var child = Process.GetProcessById(childProcessId);
+                child.Kill(entireProcessTree: true);
+                await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (ArgumentException)
+            {
+                // The detached fixture child already exited.
+            }
+        }
+    }
+
+    [Test]
+    public async Task DefaultProcessRunner_EarlyDisposeWithDescendantHoldingStdout_FailsWithinConfiguredBound()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test(LinuxFixtureSkipReason);
+            return;
+        }
+
+        var invocation = new CodexProcessInvocation(
+            PosixShellPath,
+            [PosixShellCommandFlag, DescendantHoldingStdoutScript],
+            CreateProcessEnvironment(),
+            string.Empty)
+        {
+            ProcessTerminationTimeout = TimeSpan.FromMilliseconds(250),
+        };
+        var runner = new DefaultCodexProcessRunner();
+        var enumerator = runner.RunAsync(invocation, NullLogger.Instance, CancellationToken.None).GetAsyncEnumerator();
+        var childProcessId = 0;
+
+        try
+        {
+            await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            childProcessId = int.Parse(enumerator.Current, CultureInfo.InvariantCulture);
+            using var child = Process.GetProcessById(childProcessId);
+            await Assert.That(child.HasExited).IsFalse();
+
+            var dispose = async () => await enumerator.DisposeAsync().AsTask().WaitAsync(ProcessOutputCleanupAssertionBound);
+            var exception = await Assert.That(dispose).ThrowsException();
+
+            await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+            await Assert.That(child.HasExited).IsFalse();
         }
         finally
         {
@@ -532,7 +621,7 @@ public class CodexExecTests
         try
         {
             var exec = new CodexExec(
-                executablePath: "codex",
+                executablePath: Environment.ProcessPath,
                 environmentOverride: new Dictionary<string, string>
                 {
                     ["CUSTOM_ENV"] = "custom",
@@ -560,7 +649,7 @@ public class CodexExecTests
 
         try
         {
-            var exec = new CodexExec("codex", null, null);
+            var exec = new CodexExec(Environment.ProcessPath, null, null);
             var environment = exec.BuildEnvironment(null, null);
 
             await Assert.That(environment["CODEX_SHOULD_INHERIT"]).IsEqualTo("yes");
@@ -591,18 +680,16 @@ public class CodexExecTests
     {
         var missingExecutable = Path.Combine(
             Environment.CurrentDirectory,
-            "tests",
-            ".sandbox",
+            TestDirectoryName,
+            SandboxDirectoryName,
             $"missing-codex-{Guid.NewGuid():N}",
             "codex");
 
-        var exec = new CodexExec(missingExecutable, null, null, NullLogger.Instance);
-
-        var action = async () => await DrainAsync(exec.RunAsync(new CodexExecArgs { Input = "test" }));
+        var action = () => new CodexExec(missingExecutable, null, null, NullLogger.Instance);
 
         var exception = await Assert.That(action).ThrowsException();
-        await Assert.That(exception).IsTypeOf<InvalidOperationException>();
-        await Assert.That(exception!.Message).Contains("Failed to start Codex CLI");
+        await Assert.That(exception).IsTypeOf<FileNotFoundException>();
+        await Assert.That(exception!.Message).Contains("configured Codex CLI executable was not found");
     }
 
     [Test]
@@ -678,9 +765,42 @@ public class CodexExecTests
             var action = async () => await enumerator.MoveNextAsync();
             var exception = await Assert.That(action).ThrowsException();
 
-            await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+            await Assert.That(exception).IsTypeOf<CliExecutionFailureException>();
+            await Assert.That(((CliExecutionFailureException)exception!).ExitCode).IsEqualTo(23);
+            await Assert.That(((CliExecutionFailureException)exception).RootProcessExitConfirmed).IsTrue();
             await Assert.That(exception!.Message).Contains("Codex Exec exited with code 23");
             await Assert.That(exception.Message).Contains("error-line-1");
+        }
+        finally
+        {
+            Directory.Delete(sandboxDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task DefaultProcessRunner_NonZeroExitWithCompletedBrokenPipeKeepsConfirmedFailure()
+    {
+        var sandboxDirectory = CreateSandboxDirectory();
+
+        try
+        {
+            var invocation = CreateOutputInvocation(
+                    OperatingSystem.IsWindows() ? WindowsNonZeroExitBeforeInputCommand : PosixNonZeroExitBeforeInputCommand,
+                    TimeSpan.FromSeconds(5), DuplexMaximumProcessOutputCharacters)
+                with
+            { Input = new string(PromptCharacter, DuplexPromptCharacters) };
+            var action = async () =>
+            {
+                await foreach (var _ in new DefaultCodexProcessRunner().RunAsync(invocation, NullLogger.Instance, CancellationToken.None))
+                {
+                }
+            };
+
+            var exception = await Assert.That(action).ThrowsException();
+
+            await Assert.That(exception).IsTypeOf<CliExecutionFailureException>();
+            await Assert.That(((CliExecutionFailureException)exception!).ExitCode).IsEqualTo(23);
+            await Assert.That(((CliExecutionFailureException)exception).RootProcessExitConfirmed).IsTrue();
         }
         finally
         {
@@ -739,14 +859,6 @@ public class CodexExecTests
         }
     }
 
-    private static async Task DrainAsync(IAsyncEnumerable<string> lines)
-    {
-        await foreach (var _ in lines)
-        {
-            // Intentionally empty.
-        }
-    }
-
     private static async Task WaitForProcessExitAsync(int processId)
     {
         Process process;
@@ -786,6 +898,21 @@ public class CodexExecTests
             $"CodexExecTests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(sandboxDirectory);
         return sandboxDirectory;
+    }
+
+    private static string FindExecutableInPath(string executableName)
+    {
+        var path = Environment.GetEnvironmentVariable(PathEnvironmentVariable);
+        foreach (var entry in path?.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [])
+        {
+            var candidate = Path.Combine(entry, executableName);
+            if (File.Exists(candidate))
+            {
+                return Path.GetFullPath(candidate);
+            }
+        }
+
+        throw new FileNotFoundException(NodeExecutableMissingMessage, executableName);
     }
 
     private static CodexProcessInvocation CreateOutputInvocation(

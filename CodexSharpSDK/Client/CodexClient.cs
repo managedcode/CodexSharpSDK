@@ -31,10 +31,13 @@ public sealed class CodexClient : IDisposable
 
     public CodexClientState State => _connectionState.GetSnapshot();
 
+    /// <summary>Gets the resolved executable and literal prefix arguments for the configured Codex CLI.</summary>
+    public ManagedCode.CodexSharpSDK.Models.CliLaunchCommand GetCliLaunchCommand() => _options.GetCliLaunchCommand();
+
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _connectionState.Start(CreateExec);
+        _connectionState.Start(() => CreateExec());
         return Task.CompletedTask;
     }
 
@@ -63,9 +66,9 @@ public sealed class CodexClient : IDisposable
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.CliMetadataMaximumFileCharacters);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_options.CliMetadataProbeLeaseTimeout, TimeSpan.Zero);
-        var executablePath = CodexCliLocator.FindCodexPath(_options.CodexExecutablePath);
-        using var exec = CreateExec();
-        return CodexCliMetadataReader.Read(executablePath, exec.BuildEnvironment(_options.BaseUrl, _options.ApiKey),
+        var launchCommand = GetCliLaunchCommand();
+        using var exec = CreateExec(launchCommand);
+        return CodexCliMetadataReader.Read(launchCommand, exec.BuildEnvironment(_options.BaseUrl, _options.ApiKey),
             _options.InheritEnvironmentVariables ?? _options.EnvironmentVariables is null,
             _options.CliMetadataProbeTimeout, _options.CliMetadataMaximumOutputCharacters,
             _options.CliMetadataMaximumFileCharacters, _options.CliMetadataProbeLeaseTimeout);
@@ -74,20 +77,20 @@ public sealed class CodexClient : IDisposable
     public CodexCliUpdateStatus GetCliUpdateStatus()
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_options.CliMetadataProbeLeaseTimeout, TimeSpan.Zero);
-        var executablePath = CodexCliLocator.FindCodexPath(_options.CodexExecutablePath);
-        using var exec = CreateExec();
-        return CodexCliMetadataReader.ReadUpdateStatus(executablePath,
+        var launchCommand = GetCliLaunchCommand();
+        using var exec = CreateExec(launchCommand);
+        return CodexCliMetadataReader.ReadUpdateStatus(launchCommand,
             exec.BuildEnvironment(_options.BaseUrl, _options.ApiKey),
             _options.InheritEnvironmentVariables ?? _options.EnvironmentVariables is null,
             _options.CliMetadataProbeTimeout, _options.CliMetadataMaximumOutputCharacters,
-            _options.CliMetadataProbeLeaseTimeout);
+            _options.CliMetadataProbeLeaseTimeout, _options.CliMetadataMaximumFileCharacters);
     }
 
     public void Dispose() => _connectionState.Dispose();
 
-    private CodexExec GetOrCreateExec() => _connectionState.GetOrCreate(_autoStart, CreateExec);
+    private CodexExec GetOrCreateExec() => _connectionState.GetOrCreate(_autoStart, () => CreateExec());
 
-    private CodexExec CreateExec()
+    private CodexExec CreateExec(ManagedCode.CodexSharpSDK.Models.CliLaunchCommand? launchCommand = null)
     {
         return new CodexExec(
             _options.CodexExecutablePath,
@@ -97,7 +100,8 @@ public sealed class CodexClient : IDisposable
             _options.Logger,
             _options.ProcessTerminationTimeout,
             _options.InheritEnvironmentVariables,
-            _options.MaximumProcessOutputCharacters);
+            _options.MaximumProcessOutputCharacters,
+            launchCommand ?? _options.GetCliLaunchCommand());
     }
 
     private static CodexClientOptions CreateClientOptions(CodexOptions options)
