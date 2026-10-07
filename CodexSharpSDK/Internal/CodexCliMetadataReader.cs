@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using ManagedCode.CodexSharpSDK.Configuration;
 using ManagedCode.CodexSharpSDK.Models;
 
 namespace ManagedCode.CodexSharpSDK.Internal;
@@ -57,14 +58,16 @@ internal static class CodexCliMetadataReader
     private const char SectionPrefix = '[';
 
     public static CodexCliMetadata Read(string executablePath) =>
-        Read(executablePath, EmptyEnvironment, true, DefaultProbeTimeout, DefaultMaximumOutputCharacters);
+        Read(executablePath, EmptyEnvironment, true, DefaultProbeTimeout, DefaultMaximumOutputCharacters,
+            CodexOptions.DefaultCliMetadataMaximumFileCharacters);
 
     public static CodexCliMetadata Read(
         string executablePath,
         IReadOnlyDictionary<string, string> environment,
         bool inheritEnvironmentVariables,
         TimeSpan probeTimeout,
-        int maximumOutputCharacters)
+        int maximumOutputCharacters,
+        int maximumFileCharacters = CodexOptions.DefaultCliMetadataMaximumFileCharacters)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
         ArgumentNullException.ThrowIfNull(environment);
@@ -77,8 +80,8 @@ internal static class CodexCliMetadataReader
             return new CodexCliMetadata(installedVersion, null, []);
         }
 
-        var defaultModel = ReadDefaultModel(codexHome);
-        var models = ReadModels(codexHome);
+        var defaultModel = ReadDefaultModel(codexHome, maximumFileCharacters);
+        var models = ReadModels(codexHome, maximumFileCharacters);
         return new CodexCliMetadata(installedVersion, defaultModel, models);
     }
 
@@ -441,7 +444,7 @@ internal static class CodexCliMetadataReader
             : Path.Combine(homeDirectory, DotCodexDirectory);
     }
 
-    private static string? ReadDefaultModel(string homeDirectory)
+    private static string? ReadDefaultModel(string homeDirectory, int maximumCharacters)
     {
         var configPath = Path.Combine(homeDirectory, ConfigFileName);
         if (!File.Exists(configPath))
@@ -451,7 +454,8 @@ internal static class CodexCliMetadataReader
 
         try
         {
-            return ParseDefaultModelFromTomlLines(File.ReadLines(configPath));
+            var contents = BoundedMetadataFileReader.ReadAllText(configPath, maximumCharacters);
+            return ParseDefaultModelFromTomlLines(EnumerateLines(contents));
         }
         catch (IOException exception)
         {
@@ -463,7 +467,7 @@ internal static class CodexCliMetadataReader
         }
     }
 
-    private static IReadOnlyList<CodexModelMetadata> ReadModels(string homeDirectory)
+    private static IReadOnlyList<CodexModelMetadata> ReadModels(string homeDirectory, int maximumCharacters)
     {
         var modelsCachePath = Path.Combine(homeDirectory, ModelsCacheFileName);
         if (!File.Exists(modelsCachePath))
@@ -473,8 +477,8 @@ internal static class CodexCliMetadataReader
 
         try
         {
-            using var stream = File.OpenRead(modelsCachePath);
-            using var document = JsonDocument.Parse(stream);
+            var contents = BoundedMetadataFileReader.ReadAllText(modelsCachePath, maximumCharacters);
+            using var document = JsonDocument.Parse(contents);
             return ParseModelsCache(document.RootElement);
         }
         catch (IOException exception)
@@ -488,6 +492,15 @@ internal static class CodexCliMetadataReader
         catch (JsonException exception)
         {
             throw new InvalidOperationException($"Failed to parse Codex model cache at '{modelsCachePath}'.", exception);
+        }
+    }
+
+    private static IEnumerable<string> EnumerateLines(string contents)
+    {
+        using var reader = new StringReader(contents);
+        while (reader.ReadLine() is { } line)
+        {
+            yield return line;
         }
     }
 

@@ -20,10 +20,13 @@ public class CodexClientTests
     private const string SystemRootEnvironmentVariable = "SystemRoot";
     private const string CodexHomeEnvironmentVariable = "CODEX_HOME";
     private const string HomeEnvironmentVariable = "HOME";
+    private const string UserProfileEnvironmentVariable = "USERPROFILE";
     private const string PathEnvironmentVariable = "PATH";
     private const string DotCodexDirectoryName = ".codex";
     private const string CodexConfigFileName = "config.toml";
     private const string CodexModelsCacheFileName = "models_cache.json";
+    private const int SmallMetadataFileLimit = 256;
+    private const string MetadataFileLimitMessage = "CLI metadata file exceeded the configured character limit.";
     private const string CodexConfigFixture = "model = \"" + CodexModels.Gpt53Codex + "\"";
     private const string CodexModelsCacheFixture =
         "{ \"models\": [ { \"slug\": \"" + CodexModels.Gpt53Codex +
@@ -308,6 +311,8 @@ public class CodexClientTests
             {
                 [PathEnvironmentVariable] = Environment.GetEnvironmentVariable(PathEnvironmentVariable) ?? string.Empty,
                 [CodexHomeEnvironmentVariable] = codexHome,
+                [UserProfileEnvironmentVariable] = Environment.GetEnvironmentVariable(UserProfileEnvironmentVariable) ?? string.Empty,
+                [SystemRootEnvironmentVariable] = Environment.GetEnvironmentVariable(SystemRootEnvironmentVariable) ?? string.Empty,
             });
 
             var metadata = client.GetCliMetadata();
@@ -335,6 +340,8 @@ public class CodexClientTests
             {
                 [PathEnvironmentVariable] = Environment.GetEnvironmentVariable(PathEnvironmentVariable) ?? string.Empty,
                 [HomeEnvironmentVariable] = home,
+                [UserProfileEnvironmentVariable] = Environment.GetEnvironmentVariable(UserProfileEnvironmentVariable) ?? string.Empty,
+                [SystemRootEnvironmentVariable] = Environment.GetEnvironmentVariable(SystemRootEnvironmentVariable) ?? string.Empty,
             });
 
             var metadata = client.GetCliMetadata();
@@ -344,6 +351,61 @@ public class CodexClientTests
         finally
         {
             Directory.Delete(home, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task CodexCli_GetCliMetadata_RejectsOversizedConfigLine()
+    {
+        var codexHome = CreateMetadataSandbox();
+        try
+        {
+            File.WriteAllText(Path.Combine(codexHome, CodexConfigFileName), new string('x', SmallMetadataFileLimit + 1));
+            using var client = CreateMetadataClient(new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [PathEnvironmentVariable] = Environment.GetEnvironmentVariable(PathEnvironmentVariable) ?? string.Empty,
+                [CodexHomeEnvironmentVariable] = codexHome,
+                [UserProfileEnvironmentVariable] = Environment.GetEnvironmentVariable(UserProfileEnvironmentVariable) ?? string.Empty,
+                [SystemRootEnvironmentVariable] = Environment.GetEnvironmentVariable(SystemRootEnvironmentVariable) ?? string.Empty,
+            }, SmallMetadataFileLimit);
+
+            var action = () => client.GetCliMetadata();
+            var exception = await Assert.That(action).ThrowsException();
+
+            await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+            await Assert.That(exception!.Message).Contains(MetadataFileLimitMessage);
+        }
+        finally
+        {
+            Directory.Delete(codexHome, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task CodexCli_GetCliMetadata_RejectsOversizedModelsCache()
+    {
+        var codexHome = CreateMetadataSandbox();
+        try
+        {
+            File.WriteAllText(Path.Combine(codexHome, CodexConfigFileName), CodexConfigFixture);
+            File.WriteAllText(Path.Combine(codexHome, CodexModelsCacheFileName), new string('x', SmallMetadataFileLimit + 1));
+            using var client = CreateMetadataClient(new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [PathEnvironmentVariable] = Environment.GetEnvironmentVariable(PathEnvironmentVariable) ?? string.Empty,
+                [CodexHomeEnvironmentVariable] = codexHome,
+                [UserProfileEnvironmentVariable] = Environment.GetEnvironmentVariable(UserProfileEnvironmentVariable) ?? string.Empty,
+                [SystemRootEnvironmentVariable] = Environment.GetEnvironmentVariable(SystemRootEnvironmentVariable) ?? string.Empty,
+            }, SmallMetadataFileLimit);
+
+            var action = () => client.GetCliMetadata();
+            var exception = await Assert.That(action).ThrowsException();
+
+            await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+            await Assert.That(exception!.Message).Contains(MetadataFileLimitMessage);
+        }
+        finally
+        {
+            Directory.Delete(codexHome, recursive: true);
         }
     }
 
@@ -400,12 +462,15 @@ public class CodexClientTests
         }
     }
 
-    private static CodexClient CreateMetadataClient(IReadOnlyDictionary<string, string> environment) =>
+    private static CodexClient CreateMetadataClient(
+        IReadOnlyDictionary<string, string> environment,
+        int maximumFileCharacters = CodexOptions.DefaultCliMetadataMaximumFileCharacters) =>
         new(new CodexOptions
         {
             CodexExecutablePath = CodexCliLocator.FindCodexPath(null),
             EnvironmentVariables = environment,
             InheritEnvironmentVariables = false,
+            CliMetadataMaximumFileCharacters = maximumFileCharacters,
         });
 
     private static string CreateMetadataSandbox()

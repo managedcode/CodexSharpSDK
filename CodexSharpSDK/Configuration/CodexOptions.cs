@@ -11,6 +11,10 @@ public sealed record CodexOptions
 
     public const int DefaultCliMetadataMaximumOutputCharacters = 65536;
 
+    public const int DefaultCliMetadataMaximumFileCharacters = 1048576;
+
+    public const int DefaultMaximumProcessOutputCharacters = 1048576;
+
     public string? CodexExecutablePath { get; init; }
 
     public string? BaseUrl { get; init; }
@@ -27,7 +31,11 @@ public sealed record CodexOptions
 
     public int CliMetadataMaximumOutputCharacters { get; init; } = DefaultCliMetadataMaximumOutputCharacters;
 
+    public int CliMetadataMaximumFileCharacters { get; init; } = DefaultCliMetadataMaximumFileCharacters;
+
     public TimeSpan ProcessTerminationTimeout { get; init; } = DefaultProcessTerminationTimeout;
+
+    public int MaximumProcessOutputCharacters { get; init; } = DefaultMaximumProcessOutputCharacters;
 
     public ILogger? Logger { get; init; }
 }

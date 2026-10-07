@@ -17,11 +17,90 @@ public class CodexExecTests
     private const string PosixFixtureSkipReason = "The public CLI yield-boundary fixture currently uses a POSIX executable script.";
     private const string LinuxFixtureSkipReason = "The detached stderr-retention fixture requires Linux setsid.";
     private const string StderrClosureFailure = "stderr stream closed";
+    private const string ProcessOutputLimitMessage = "Codex CLI process exceeded the configured output limit.";
+    private const string PosixSingleLineOverflowCommand = "printf '%100s\\n' x; exec /bin/sleep 30";
+    private const string PosixMultiLineOverflowCommand = "printf '1234567890\\n1234567890\\n1234567890\\n'";
+    private const string PosixStandardErrorPressureCommand = "printf '%100s' x >&2; exec /bin/sleep 30";
+    private const string PosixNormalMultiLineCommand = "printf 'first\\nsecond\\n'";
+    private const string WindowsPowerShellPath = "powershell.exe";
+    private const string WindowsNoProfileFlag = "-NoProfile";
+    private const string WindowsNonInteractiveFlag = "-NonInteractive";
+    private const string WindowsCommandFlag = "-Command";
+    private const string WindowsSingleLineOverflowCommand = "[Console]::Out.WriteLine('x' * 100); Start-Sleep -Seconds 30";
+    private const string WindowsMultiLineOverflowCommand = "Write-Output '1234567890'; Write-Output '1234567890'; Write-Output '1234567890'";
+    private const string WindowsStandardErrorPressureCommand = "[Console]::Error.Write('x' * 100); Start-Sleep -Seconds 30";
+    private const string WindowsNormalMultiLineCommand = "Write-Output 'first'; Write-Output 'second'";
+    private const string ExpectedFirstLine = "first";
+    private const string ExpectedSecondLine = "second";
+    private const int SmallOutputLimitCharacters = 64;
+    private const int AggregateOutputLimitCharacters = 24;
     private const string TestInput = "test";
     private const string CancellationScriptFileName = "codex-cancel.sh";
     private const string MissingExecutableNamePrefix = "missing-codex-cli-";
     private const string PosixShellPath = "/bin/sh";
     private const string PosixShellCommandFlag = "-c";
+
+    [Test]
+    public async Task DefaultProcessRunner_PreservesMultilineOutputWithinConfiguredBudget()
+    {
+        var invocation = CreateOutputInvocation(
+            OperatingSystem.IsWindows() ? WindowsNormalMultiLineCommand : PosixNormalMultiLineCommand,
+            TimeSpan.FromSeconds(5), SmallOutputLimitCharacters);
+        var runner = new DefaultCodexProcessRunner();
+        var lines = await DrainToListAsync(runner.RunAsync(invocation, NullLogger.Instance, CancellationToken.None));
+
+        await Assert.That(lines).Count().IsEqualTo(2);
+        await Assert.That(lines[0]).IsEqualTo(ExpectedFirstLine);
+        await Assert.That(lines[1]).IsEqualTo(ExpectedSecondLine);
+    }
+
+    [Test]
+    public async Task DefaultProcessRunner_RejectsSingleLineAboveConfiguredBudget()
+    {
+        var invocation = CreateOutputInvocation(
+            OperatingSystem.IsWindows() ? WindowsSingleLineOverflowCommand : PosixSingleLineOverflowCommand,
+            TimeSpan.FromSeconds(2), SmallOutputLimitCharacters);
+        var runner = new DefaultCodexProcessRunner();
+        var action = async () => await DrainToListAsync(runner.RunAsync(invocation, NullLogger.Instance, CancellationToken.None));
+
+        var exception = await Assert.That(action).ThrowsException();
+
+        await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+        await Assert.That(exception!.Message).Contains(ProcessOutputLimitMessage);
+    }
+
+    [Test]
+    public async Task DefaultProcessRunner_RejectsAggregateMultilineOutputAboveConfiguredBudget()
+    {
+        var invocation = CreateOutputInvocation(
+            OperatingSystem.IsWindows() ? WindowsMultiLineOverflowCommand : PosixMultiLineOverflowCommand,
+            TimeSpan.FromSeconds(2), AggregateOutputLimitCharacters);
+        var runner = new DefaultCodexProcessRunner();
+        var action = async () => await DrainToListAsync(runner.RunAsync(invocation, NullLogger.Instance, CancellationToken.None));
+
+        var exception = await Assert.That(action).ThrowsException();
+
+        await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+        await Assert.That(exception!.Message).Contains(ProcessOutputLimitMessage);
+    }
+
+    [Test]
+    public async Task DefaultProcessRunner_StandardErrorPressureStopsQuietRootWithinBound()
+    {
+        var invocation = CreateOutputInvocation(
+            OperatingSystem.IsWindows() ? WindowsStandardErrorPressureCommand : PosixStandardErrorPressureCommand,
+            TimeSpan.FromSeconds(2), SmallOutputLimitCharacters);
+        var runner = new DefaultCodexProcessRunner();
+        var stopwatch = Stopwatch.StartNew();
+        var action = async () => await DrainToListAsync(runner.RunAsync(invocation, NullLogger.Instance, CancellationToken.None));
+
+        var exception = await Assert.That(action).ThrowsException();
+        stopwatch.Stop();
+
+        await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+        await Assert.That(exception!.Message).Contains(ProcessOutputLimitMessage);
+        await Assert.That(stopwatch.Elapsed < TimeSpan.FromSeconds(5)).IsTrue();
+    }
 
     [Test]
     public async Task PublicExec_CancellationBetweenYieldedLinesIsNotReportedAsSuccess()
@@ -102,6 +181,8 @@ public class CodexExecTests
             return;
         }
 
+        var standardErrorReaderCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var standardOutputReadCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var invocation = new CodexProcessInvocation(
             PosixShellPath,
             [PosixShellCommandFlag, DescendantHoldingStderrScript],
@@ -109,6 +190,8 @@ public class CodexExecTests
             string.Empty)
         {
             ProcessTerminationTimeout = TimeSpan.FromMilliseconds(250),
+            StandardErrorReaderCompleted = () => standardErrorReaderCompleted.TrySetResult(),
+            StandardOutputReadCompleted = () => standardOutputReadCompleted.TrySetResult(),
         };
         var runner = new DefaultCodexProcessRunner();
         await using var enumerator = runner.RunAsync(invocation, NullLogger.Instance, CancellationToken.None)
@@ -127,6 +210,8 @@ public class CodexExecTests
             await Assert.That(exception).IsTypeOf<InvalidOperationException>();
             await Assert.That(exception!.Message).Contains(StderrClosureFailure);
             await Assert.That(stopwatch.Elapsed < TimeSpan.FromSeconds(2)).IsTrue();
+            await standardOutputReadCompleted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await standardErrorReaderCompleted.Task.WaitAsync(TimeSpan.FromSeconds(1));
         }
         finally
         {
@@ -589,6 +674,24 @@ public class CodexExecTests
             $"CodexExecTests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(sandboxDirectory);
         return sandboxDirectory;
+    }
+
+    private static CodexProcessInvocation CreateOutputInvocation(
+        string command,
+        TimeSpan processTerminationTimeout,
+        int maximumProcessOutputCharacters)
+    {
+        return new CodexProcessInvocation(
+            OperatingSystem.IsWindows() ? WindowsPowerShellPath : PosixShellPath,
+            OperatingSystem.IsWindows()
+                ? [WindowsNoProfileFlag, WindowsNonInteractiveFlag, WindowsCommandFlag, command]
+                : [PosixShellCommandFlag, command],
+            CreateProcessEnvironment(),
+            string.Empty)
+        {
+            ProcessTerminationTimeout = processTerminationTimeout,
+            MaximumProcessOutputCharacters = maximumProcessOutputCharacters,
+        };
     }
 
     private static ShellScriptHandle CreateShellScript(string sandboxDirectory, string name, string body)

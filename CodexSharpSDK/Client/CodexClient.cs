@@ -61,11 +61,13 @@ public sealed class CodexClient : IDisposable
 
     public CodexCliMetadata GetCliMetadata()
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.CliMetadataMaximumFileCharacters);
         var executablePath = CodexCliLocator.FindCodexPath(_options.CodexExecutablePath);
         using var exec = CreateExec();
         return CodexCliMetadataReader.Read(executablePath, exec.BuildEnvironment(_options.BaseUrl, _options.ApiKey),
             _options.InheritEnvironmentVariables ?? _options.EnvironmentVariables is null,
-            _options.CliMetadataProbeTimeout, _options.CliMetadataMaximumOutputCharacters);
+            _options.CliMetadataProbeTimeout, _options.CliMetadataMaximumOutputCharacters,
+            _options.CliMetadataMaximumFileCharacters);
     }
 
     public CodexCliUpdateStatus GetCliUpdateStatus()
@@ -91,7 +93,8 @@ public sealed class CodexClient : IDisposable
             null,
             _options.Logger,
             _options.ProcessTerminationTimeout,
-            _options.InheritEnvironmentVariables);
+            _options.InheritEnvironmentVariables,
+            _options.MaximumProcessOutputCharacters);
     }
 
     private static CodexClientOptions CreateClientOptions(CodexOptions options)
