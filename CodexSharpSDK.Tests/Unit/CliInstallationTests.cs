@@ -42,7 +42,7 @@ public sealed class CliInstallationTests
     private const string PipeHolderMarkerName = "pipe-holder";
     private const string PipeHolderPidFileName = "pipe-holder.pid";
     private const string SetsidCommandName = "setsid";
-    private const string SetsidPathEnvironmentVariableName = "SDK_TEST_SETSID_PATH";
+    private const string SetsidPathPlaceholder = "SETSID_PATH_LITERAL";
     private const string CleanupMessage = "CLI installation process or output cleanup could not be confirmed within its configured timeout.";
     private const string TimeoutMessage = "CLI installation exceeded its configured process timeout.";
     private const string DetachedPipeHolderSkipReason = "The detached pipe-holder cleanup fixture requires Linux setsid.";
@@ -95,7 +95,7 @@ public sealed class CliInstallationTests
         if (fs.existsSync(path.join(__dirname, 'pipe-holder'))) {
             const { spawn } = require('node:child_process');
             const childScript = 'printf "%s" "$$" > "$1.tmp" && mv "$1.tmp" "$1" && exec /bin/sleep 60';
-            const holder = spawn(process.env.SDK_TEST_SETSID_PATH, ['/bin/sh', '-c', childScript, 'holder',
+            const holder = spawn(SETSID_PATH_LITERAL, ['/bin/sh', '-c', childScript, 'holder',
                 path.join(__dirname, 'pipe-holder.pid')], { detached: true, stdio: 'inherit' });
             holder.unref();
         }
@@ -459,7 +459,6 @@ public sealed class CliInstallationTests
             .Replace(PackagePlaceholder, PackageName, StringComparison.Ordinal)
             .Replace(CliPlaceholder, PackageCliName, StringComparison.Ordinal)
             .Replace(EntryPlaceholder, PackageEntry, StringComparison.Ordinal);
-        await File.WriteAllTextAsync(npmScript, script);
         var node = FindNode();
         var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -467,8 +466,11 @@ public sealed class CliInstallationTests
         };
         if (OperatingSystem.IsLinux())
         {
-            environment[SetsidPathEnvironmentVariableName] = FindExecutablePath(SetsidCommandName);
+            var setsidPath = FindExecutablePath(SetsidCommandName);
+            script = script.Replace(SetsidPathPlaceholder,
+                System.Text.Json.JsonEncodedText.Encode(setsidPath).ToString(), StringComparison.Ordinal);
         }
+        await File.WriteAllTextAsync(npmScript, script);
         var systemRoot = Environment.GetEnvironmentVariable(SystemRootName);
         if (OperatingSystem.IsWindows() && !string.IsNullOrWhiteSpace(systemRoot))
         {
