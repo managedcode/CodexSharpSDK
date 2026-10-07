@@ -39,6 +39,13 @@ public sealed class CliInstallationTests
     private const string SystemRootName = "SYSTEMROOT";
     private const string MismatchMarkerName = "mismatch";
     private const string HangMarkerName = "hang";
+    private const string PipeHolderMarkerName = "pipe-holder";
+    private const string PipeHolderPidFileName = "pipe-holder.pid";
+    private const string SetsidPathEnvironmentName = "CODEX_TEST_SETSID_PATH";
+    private const string PipeHolderPidFileEnvironmentName = "CODEX_TEST_PIPE_HOLDER_PID_FILE";
+    private const string SetsidCommandName = "setsid";
+    private const string CleanupMessage = "CLI installation process or output cleanup could not be confirmed within its configured timeout.";
+    private const string DetachedPipeHolderSkipReason = "The detached pipe-holder cleanup fixture requires Linux setsid.";
     private const string OverflowMarkerName = "overflow";
     private const string PackagePlaceholder = "PACKAGE_NAME";
     private const string CliPlaceholder = "CLI_NAME";
@@ -78,6 +85,12 @@ public sealed class CliInstallationTests
         if (fs.existsSync(path.join(__dirname, 'hang'))) {
             fs.writeFileSync(path.join(__dirname, 'child.pid'), String(process.pid));
             setInterval(() => {}, 1000);
+        }
+        if (fs.existsSync(path.join(__dirname, 'pipe-holder'))) {
+            const { spawnSync } = require('node:child_process');
+            const shellCommand = '"$1" /bin/sh -c \'echo $$ > "$1"; exec /bin/sleep 60\' holder "$2" &';
+            spawnSync('/bin/sh', ['-c', shellCommand, 'fixture', process.env.CODEX_TEST_SETSID_PATH,
+                process.env.CODEX_TEST_PIPE_HOLDER_PID_FILE], { stdio: 'inherit' });
         }
         if (fs.existsSync(path.join(__dirname, 'overflow'))) {
             process.stdout.write('x'.repeat(8192));
@@ -224,6 +237,69 @@ public sealed class CliInstallationTests
         }
     }
 
+    [Test]
+    public async Task CancellationWithDetachedPipeHolderSurfacesUnconfirmedCleanup()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test(DetachedPipeHolderSkipReason);
+            return;
+        }
+
+        var fixture = await CreateFixtureAsync();
+        var holderPidFile = Path.Combine(fixture.NpmRoot, BinDirectoryName, PipeHolderPidFileName);
+        var packageManagerPidFile = Path.Combine(fixture.NpmRoot, BinDirectoryName, ChildPidFileName);
+        var holderProcessId = 0;
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(fixture.NpmRoot, BinDirectoryName, HangMarkerName), string.Empty);
+            await File.WriteAllTextAsync(Path.Combine(fixture.NpmRoot, BinDirectoryName, PipeHolderMarkerName), string.Empty);
+            var environment = fixture.Options.EnvironmentVariables.ToDictionary(
+                static pair => pair.Key, static pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+            environment[SetsidPathEnvironmentName] = FindExecutablePath(SetsidCommandName);
+            environment[PipeHolderPidFileEnvironmentName] = holderPidFile;
+            var options = fixture.Options with
+            {
+                EnvironmentVariables = environment,
+                ProcessTerminationTimeout = TimeSpan.FromSeconds(1)
+            };
+            using var cancellation = new CancellationTokenSource();
+            await using var updates = CodexCliInstallation.InstallOrUpdateAsync(options,
+                fixture.LocalApplicationDataRoot, cancellation.Token).GetAsyncEnumerator();
+            await Assert.That(await updates.MoveNextAsync()).IsTrue();
+            using var markerTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await WaitForFileAsync(packageManagerPidFile, markerTimeout.Token);
+            await WaitForFileAsync(holderPidFile, markerTimeout.Token);
+            var packageManagerPid = int.Parse(await File.ReadAllTextAsync(packageManagerPidFile),
+                System.Globalization.CultureInfo.InvariantCulture);
+            holderProcessId = int.Parse(await File.ReadAllTextAsync(holderPidFile),
+                System.Globalization.CultureInfo.InvariantCulture);
+            await Assert.That(IsProcessRunning(packageManagerPid)).IsTrue();
+            await Assert.That(IsProcessRunning(holderProcessId)).IsTrue();
+
+            cancellation.Cancel();
+            var exception = await Assert.That(async () =>
+            {
+                while (await updates.MoveNextAsync())
+                {
+                }
+            }).ThrowsException();
+            await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+            await Assert.That(exception!.Message).IsEqualTo(CleanupMessage);
+            await Assert.That(IsProcessRunning(packageManagerPid)).IsFalse();
+            await Assert.That(IsProcessRunning(holderProcessId)).IsTrue();
+        }
+        finally
+        {
+            if (holderProcessId > 0)
+            {
+                StopProcess(holderProcessId);
+            }
+
+            DeleteFixture(fixture.FixtureRoot);
+        }
+    }
+
     private static async Task<List<CliInstallationUpdate>> RunInstallationAsync(
         InstallationFixture fixture,
         CliInstallationOptions? options = null)
@@ -289,6 +365,39 @@ public sealed class CliInstallationTests
         var node = path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             .Select(directory => Path.Combine(directory, executableName)).FirstOrDefault(File.Exists);
         return node is null ? throw new InvalidOperationException(NodeRequiredMessage) : Path.GetFullPath(node);
+    }
+
+    private static string FindExecutablePath(string executableName)
+    {
+        var path = Environment.GetEnvironmentVariable(PathName) ?? string.Empty;
+        var executable = path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Select(directory => Path.Combine(directory, executableName)).FirstOrDefault(File.Exists);
+        return Path.GetFullPath(executable ?? throw new InvalidOperationException(NodeRequiredMessage));
+    }
+
+    private static async Task WaitForFileAsync(string path, CancellationToken cancellationToken)
+    {
+        while (!File.Exists(path))
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
+        }
+    }
+
+    private static void StopProcess(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(2000);
+            }
+        }
+        catch (ArgumentException)
+        {
+            return;
+        }
     }
 
     private static void DeleteFixture(string root)

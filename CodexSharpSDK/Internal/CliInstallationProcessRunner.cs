@@ -233,25 +233,6 @@ internal static class CliInstallationProcessRunner
             failure ??= exception;
         }
 
-        readerCancellation.Cancel();
-        try
-        {
-            process.StandardOutput.Dispose();
-        }
-        catch (Exception exception)
-        {
-            failure ??= exception;
-        }
-
-        try
-        {
-            process.StandardError.Dispose();
-        }
-        catch (Exception exception)
-        {
-            failure ??= exception;
-        }
-
         try
         {
             await Task.WhenAll(stdoutTask, stderrTask).WaitAsync(terminationTimeout, CancellationToken.None)
@@ -259,16 +240,51 @@ internal static class CliInstallationProcessRunner
         }
         catch (Exception exception)
         {
-            if (IsOnlyOutputLimitFailure(stdoutTask, stderrTask))
+            if (!IsOnlyOutputLimitFailure(stdoutTask, stderrTask))
             {
-                ThrowCleanupFailure(failure);
-                return;
+                failure ??= exception;
             }
-
-            failure ??= exception;
         }
 
+        readerCancellation.Cancel();
+        DisposeReader(process.StandardOutput, ref failure);
+        DisposeReader(process.StandardError, ref failure);
+        failure = await JoinReadersAsync(stdoutTask, stderrTask, terminationTimeout, failure).ConfigureAwait(false);
         ThrowCleanupFailure(failure);
+    }
+
+    private static void DisposeReader(TextReader reader, ref Exception? failure)
+    {
+        try
+        {
+            reader.Dispose();
+        }
+        catch (Exception exception)
+        {
+            failure ??= exception;
+        }
+    }
+
+    private static async Task<Exception?> JoinReadersAsync(
+        Task stdoutTask,
+        Task stderrTask,
+        TimeSpan terminationTimeout,
+        Exception? failure)
+    {
+        try
+        {
+            await Task.WhenAll(stdoutTask, stderrTask).WaitAsync(terminationTimeout, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            if (!IsOnlyOutputLimitFailure(stdoutTask, stderrTask))
+            {
+                failure ??= exception;
+            }
+        }
+
+        return failure;
     }
 
     private static void ThrowCleanupFailure(Exception? failure)
