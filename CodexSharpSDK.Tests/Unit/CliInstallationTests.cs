@@ -468,7 +468,7 @@ public sealed class CliInstallationTests
         {
             var setsidPath = FindExecutablePath(SetsidCommandName);
             script = script.Replace(SetsidPathPlaceholder,
-                System.Text.Json.JsonEncodedText.Encode(setsidPath).ToString(), StringComparison.Ordinal);
+                "\"" + System.Text.Json.JsonEncodedText.Encode(setsidPath) + "\"", StringComparison.Ordinal);
         }
         await File.WriteAllTextAsync(npmScript, script);
         var systemRoot = Environment.GetEnvironmentVariable(SystemRootName);
