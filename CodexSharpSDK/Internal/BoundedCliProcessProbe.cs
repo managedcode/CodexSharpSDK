@@ -8,11 +8,27 @@ internal static class BoundedCliProcessProbe
     private const string ProbeFailedMessage = "CLI metadata process could not be started.";
     private const string ProbeTimedOutMessage = "CLI metadata process did not exit within the configured time limit.";
     private const string ProbeOutputTimedOutMessage = "CLI metadata process output did not close within the configured time limit.";
+    private const string ProbeOutputCleanupFailedMessage = "CLI metadata process output readers did not stop within the configured time limit.";
+    private const string ProbeBlockedByIncompleteCleanupMessage = "CLI metadata process probe is blocked by an earlier incomplete cleanup.";
+    private const string ProbeBusyMessage = "CLI metadata process probe could not acquire its bounded process lease.";
     private const string ProbeKillFailedMessage = "CLI metadata process could not be stopped after the configured time limit.";
     private const string ProbeOutputLimitMessage = "CLI metadata process exceeded the configured output limit.";
     private const string InvalidTimeoutMessage = "CLI metadata timeout must be positive.";
     private const string InvalidOutputLimitMessage = "CLI metadata output limit must be positive.";
     private const int ReadBufferSize = 4096;
+    private static readonly object ProbeGateLock = new();
+    private static bool ProbeLeaseHeld;
+    private static int PendingReaderCleanups;
+    internal static int PendingReaderCleanupCount
+    {
+        get
+        {
+            lock (ProbeGateLock)
+            {
+                return PendingReaderCleanups;
+            }
+        }
+    }
 
     public static CliProcessProbeResult Run(
         string executablePath,
@@ -21,7 +37,8 @@ internal static class BoundedCliProcessProbe
         bool inheritEnvironmentVariables,
         TimeSpan timeout,
         int maximumOutputCharacters,
-        Action<int>? readerCountChanged = null)
+        Action<int>? readerCountChanged = null,
+        TimeSpan? leaseAcquisitionTimeout = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
         ArgumentNullException.ThrowIfNull(arguments);
@@ -35,6 +52,9 @@ internal static class BoundedCliProcessProbe
             throw new ArgumentOutOfRangeException(nameof(maximumOutputCharacters), InvalidOutputLimitMessage);
         }
 
+        var timeoutMilliseconds = GetTimeoutMilliseconds(timeout);
+        var leaseTimeoutMilliseconds = GetTimeoutMilliseconds(leaseAcquisitionTimeout ?? timeout);
+        using var probeGateLease = ProbeGateLease.Acquire(leaseTimeoutMilliseconds);
         var startInfo = new ProcessStartInfo(executablePath)
         {
             RedirectStandardInput = true,
@@ -81,17 +101,22 @@ internal static class BoundedCliProcessProbe
             readerCountChanged, drainCancellation.Token);
         var standardErrorTask = ReadBoundedAndDrainAsync(process.StandardError, maximumOutputCharacters,
             readerCountChanged, drainCancellation.Token);
-        var timeoutMilliseconds = GetTimeoutMilliseconds(timeout);
         if (!process.WaitForExit(timeoutMilliseconds))
         {
+            var readersStopped = true;
             try
             {
                 StopAndConfirm(process, timeoutMilliseconds);
             }
             finally
             {
-                CancelAndCloseReaders(process, drainCancellation, standardOutputTask, standardErrorTask,
-                    timeoutMilliseconds);
+                readersStopped = CancelAndCloseReaders(process, drainCancellation, standardOutputTask,
+                    standardErrorTask, timeoutMilliseconds, probeGateLease);
+            }
+
+            if (!readersStopped)
+            {
+                throw new InvalidOperationException(ProbeOutputCleanupFailedMessage);
             }
 
             throw new TimeoutException(ProbeTimedOutMessage);
@@ -102,14 +127,20 @@ internal static class BoundedCliProcessProbe
         {
             if (!drains.Wait(timeoutMilliseconds))
             {
+                var readersStopped = true;
                 try
                 {
                     StopAndConfirm(process, timeoutMilliseconds);
                 }
                 finally
                 {
-                    CancelAndCloseReaders(process, drainCancellation, standardOutputTask, standardErrorTask,
-                        timeoutMilliseconds);
+                    readersStopped = CancelAndCloseReaders(process, drainCancellation, standardOutputTask,
+                        standardErrorTask, timeoutMilliseconds, probeGateLease);
+                }
+
+                if (!readersStopped)
+                {
+                    throw new InvalidOperationException(ProbeOutputCleanupFailedMessage);
                 }
 
                 throw new TimeoutException(ProbeOutputTimedOutMessage);
@@ -178,12 +209,13 @@ internal static class BoundedCliProcessProbe
         return new BoundedText(builder.ToString(), truncated);
     }
 
-    private static void CancelAndCloseReaders(
+    private static bool CancelAndCloseReaders(
         Process process,
         CancellationTokenSource drainCancellation,
         Task<BoundedText> standardOutputTask,
         Task<BoundedText> standardErrorTask,
-        int timeoutMilliseconds)
+        int timeoutMilliseconds,
+        ProbeGateLease probeGateLease)
     {
         drainCancellation.Cancel();
         var closeFailed = false;
@@ -211,18 +243,21 @@ internal static class BoundedCliProcessProbe
             if (!drains.Wait(timeoutMilliseconds))
             {
                 ObserveLaterFailure(drains);
-                return;
+                probeGateLease.ReleaseWhenDrained(drains);
+                return false;
             }
         }
         catch (AggregateException)
         {
-            closeFailed = true;
+            ObserveLaterFailure(drains);
         }
 
         if (closeFailed)
         {
             ObserveLaterFailure(drains);
         }
+
+        return true;
     }
 
     private static void ObserveLaterFailure(Task drains)
@@ -232,6 +267,20 @@ internal static class BoundedCliProcessProbe
             CancellationToken.None,
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
+    }
+
+    private static void ReleaseProbeLease(bool retainedCleanup)
+    {
+        lock (ProbeGateLock)
+        {
+            if (retainedCleanup)
+            {
+                PendingReaderCleanups--;
+            }
+
+            ProbeLeaseHeld = false;
+            Monitor.PulseAll(ProbeGateLock);
+        }
     }
 
     private static void StopAndConfirm(Process process, int timeoutMilliseconds)
@@ -259,6 +308,65 @@ internal static class BoundedCliProcessProbe
 
     private static int GetTimeoutMilliseconds(TimeSpan timeout) =>
         (int)Math.Clamp(Math.Ceiling(timeout.TotalMilliseconds), 1, int.MaxValue);
+
+    private sealed class ProbeGateLease : IDisposable
+    {
+        private bool _retainedForCleanup;
+
+        public static ProbeGateLease Acquire(int leaseTimeoutMilliseconds)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var waitMilliseconds = Math.Min((long)leaseTimeoutMilliseconds * 2, int.MaxValue);
+            lock (ProbeGateLock)
+            {
+                while (ProbeLeaseHeld)
+                {
+                    if (PendingReaderCleanups > 0)
+                    {
+                        throw new InvalidOperationException(ProbeBlockedByIncompleteCleanupMessage);
+                    }
+
+                    var remainingMilliseconds = waitMilliseconds - stopwatch.ElapsedMilliseconds;
+                    if (remainingMilliseconds <= 0)
+                    {
+                        throw new InvalidOperationException(ProbeBusyMessage);
+                    }
+
+                    Monitor.Wait(ProbeGateLock, (int)Math.Min(remainingMilliseconds, int.MaxValue));
+                }
+
+                ProbeLeaseHeld = true;
+                return new ProbeGateLease();
+            }
+        }
+
+        public void ReleaseWhenDrained(Task drains)
+        {
+            lock (ProbeGateLock)
+            {
+                PendingReaderCleanups++;
+                _retainedForCleanup = true;
+            }
+
+            _ = drains.ContinueWith(
+                static task =>
+                {
+                    _ = task.Exception;
+                    ReleaseProbeLease(retainedCleanup: true);
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+
+        public void Dispose()
+        {
+            if (!_retainedForCleanup)
+            {
+                ReleaseProbeLease(retainedCleanup: false);
+            }
+        }
+    }
 
     private sealed record BoundedText(string Text, bool Truncated);
 }

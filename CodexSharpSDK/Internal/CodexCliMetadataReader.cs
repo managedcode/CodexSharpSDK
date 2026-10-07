@@ -328,7 +328,8 @@ internal static class CodexCliMetadataReader
         int maximumOutputCharacters)
     {
         var probe = BoundedCliProcessProbe.Run(executablePath, [VersionFlag], environment,
-            inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters);
+            inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters,
+            leaseAcquisitionTimeout: probeTimeout);
         if (probe.ExitCode != 0)
         {
             throw new InvalidOperationException(ProbeFailureMessage);
@@ -383,14 +384,16 @@ internal static class CodexCliMetadataReader
         if (!OperatingSystem.IsWindows())
         {
             return BoundedCliProcessProbe.Run(NpmExecutableName, npmArguments, environment,
-                inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters);
+                inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters,
+                leaseAcquisitionTimeout: probeTimeout);
         }
 
         var commandProcessor = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
             WindowsCommandProcessorName);
         return BoundedCliProcessProbe.Run(commandProcessor,
             [WindowsCommandDisableAutoRunFlag, WindowsCommandFlag, NpmWindowsScriptName, .. npmArguments],
-            environment, inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters);
+            environment, inheritEnvironmentVariables, probeTimeout, maximumOutputCharacters,
+            leaseAcquisitionTimeout: probeTimeout);
     }
 
     private static string ResolveCodexHome(
