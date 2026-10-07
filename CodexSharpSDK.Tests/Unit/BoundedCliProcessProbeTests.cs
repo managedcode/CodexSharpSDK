@@ -165,25 +165,31 @@ public class BoundedCliProcessProbeTests
     {
         var drains = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var leaseReleased = BoundedCliProcessProbe.RetainProbeLeaseForTesting(drains.Task);
-        await Assert.That(BoundedCliProcessProbe.PendingReaderCleanupCount).IsEqualTo(1);
+        try
+        {
+            await Assert.That(BoundedCliProcessProbe.PendingReaderCleanupCount).IsEqualTo(1);
 
-        var readersStarted = 0;
-        var exception = await Assert.That(() => BoundedCliProcessProbe.Run(
-            OperatingSystem.IsWindows() ? Path.Combine(Environment.SystemDirectory, ShellExecutableWindows) : ShellExecutableUnix,
-            [OperatingSystem.IsWindows() ? ShellArgumentWindows : ShellArgumentUnix,
-                OperatingSystem.IsWindows() ? CompletedProbeCommandWindows : CompletedProbeCommandUnix],
-            environment: null,
-            inheritEnvironmentVariables: true,
-            timeout: ProbeTimeout,
-            maximumOutputCharacters: 64,
-            readerCountChanged: delta => Interlocked.Add(ref readersStarted, delta))).ThrowsException();
+            var readersStarted = 0;
+            var exception = await Assert.That(() => BoundedCliProcessProbe.Run(
+                OperatingSystem.IsWindows() ? Path.Combine(Environment.SystemDirectory, ShellExecutableWindows) : ShellExecutableUnix,
+                [OperatingSystem.IsWindows() ? ShellArgumentWindows : ShellArgumentUnix,
+                    OperatingSystem.IsWindows() ? CompletedProbeCommandWindows : CompletedProbeCommandUnix],
+                environment: null,
+                inheritEnvironmentVariables: true,
+                timeout: ProbeTimeout,
+                maximumOutputCharacters: 64,
+                readerCountChanged: delta => Interlocked.Add(ref readersStarted, delta))).ThrowsException();
 
-        await Assert.That(exception).IsTypeOf<InvalidOperationException>();
-        await Assert.That(exception!.Message).IsEqualTo(ProbeBlockedMessage);
-        await Assert.That(readersStarted).IsEqualTo(0);
+            await Assert.That(exception).IsTypeOf<InvalidOperationException>();
+            await Assert.That(exception!.Message).IsEqualTo(ProbeBlockedMessage);
+            await Assert.That(readersStarted).IsEqualTo(0);
+        }
+        finally
+        {
+            drains.TrySetResult();
+            await leaseReleased.WaitAsync(ProcessTimeout);
+        }
 
-        drains.SetResult();
-        await leaseReleased.WaitAsync(ProcessTimeout);
         await Assert.That(BoundedCliProcessProbe.PendingReaderCleanupCount).IsEqualTo(0);
         var result = Run(CompletedProbeCommandUnix, CompletedProbeCommandWindows,
             environment: null, inheritEnvironmentVariables: true, timeout: ProbeTimeout);
@@ -304,13 +310,20 @@ public class BoundedCliProcessProbeTests
             return;
         }
 
-        using var child = Process.GetProcessById(processId);
-        if (!child.HasExited)
+        try
         {
-            child.Kill(entireProcessTree: true);
-        }
+            using var child = Process.GetProcessById(processId);
+            if (!child.HasExited)
+            {
+                child.Kill(entireProcessTree: true);
+            }
 
-        child.WaitForExit(1000);
+            child.WaitForExit(1000);
+        }
+        catch (ArgumentException)
+        {
+            // The detached fixture child may exit between the idempotent cleanup calls.
+        }
     }
 
     private static CliProcessProbeResult Run(
