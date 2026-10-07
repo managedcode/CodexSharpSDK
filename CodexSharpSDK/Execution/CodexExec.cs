@@ -484,6 +484,7 @@ internal sealed record CodexProcessInvocation(
     public Action? StandardErrorReaderCompleted { get; init; }
     public Action? StandardOutputReadCompleted { get; init; }
     public Action? StandardErrorOutputLimitExceeded { get; init; }
+    public Action<bool>? StandardInputWriteFailed { get; init; }
 }
 
 internal interface ICodexProcessRunner
@@ -570,7 +571,11 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
             standardOutput = new BoundedProcessOutputReader(process.StandardOutput,
                 invocation.MaximumProcessOutputCharacters, invocation.StandardOutputReadCompleted);
             standardOutputReadTask = standardOutput.ReadLineAsync(CancellationToken.None).AsTask();
-            standardInputWriteTask = WriteStandardInputAsync(process.StandardInput, invocation.Input, outputCancellation.Token);
+            standardInputWriteTask = WriteStandardInputAsync(process.StandardInput, invocation.Input,
+                invocation.StandardInputWriteFailed is null
+                    ? null
+                    : () => invocation.StandardInputWriteFailed(process.HasExited),
+                outputCancellation.Token);
             while (true)
             {
                 var readLineTask = standardOutputReadTask!;
@@ -972,11 +977,20 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
     private static async Task WriteStandardInputAsync(
         StreamWriter standardInput,
         string input,
+        Action? onWriteFailure,
         CancellationToken cancellationToken)
     {
-        await standardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false);
-        await standardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
-        await standardInput.DisposeAsync().ConfigureAwait(false);
+        try
+        {
+            await standardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await standardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+            await standardInput.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (IOException)
+        {
+            onWriteFailure?.Invoke();
+            throw;
+        }
     }
 
     private static async Task AwaitStandardInputWriteAsync(

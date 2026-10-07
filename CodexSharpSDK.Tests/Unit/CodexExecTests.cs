@@ -42,7 +42,7 @@ public class CodexExecTests
     private const string WindowsNormalMultiLineCommand = "Write-Output 'first'; Write-Output 'second'";
     private const string WindowsNonZeroExitBeforeInputCommand = "[Console]::Error.WriteLine('provider failed'); Start-Sleep -Milliseconds 100; exit 23";
     private const string WindowsZeroExitAfterClosingInputCommand = "[Console]::OpenStandardInput().Dispose(); Start-Sleep -Milliseconds 100; exit 0";
-    private const string WindowsStaysRunningAfterClosingInputCommand = "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class CliTestNativeInput { [DllImport(\"kernel32.dll\")] public static extern bool CloseHandle(IntPtr handle); [DllImport(\"kernel32.dll\")] public static extern IntPtr GetStdHandle(int handle); }'; [CliTestNativeInput]::CloseHandle([CliTestNativeInput]::GetStdHandle(-10)); Write-Output 'started'; Start-Sleep -Seconds 30";
+    private const string WindowsStaysRunningAfterClosingInputCommand = "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class CliTestNativeInput { [DllImport(\"kernel32.dll\")] public static extern bool CloseHandle(IntPtr handle); [DllImport(\"kernel32.dll\")] public static extern IntPtr GetStdHandle(int handle); }'; $closeSucceeded=[CliTestNativeInput]::CloseHandle([CliTestNativeInput]::GetStdHandle(-10)); if(-not $closeSucceeded){throw 'The Windows fixture could not close its stdin handle.'}; Write-Output 'started'; Start-Sleep -Seconds 30";
     private const string ExpectedFirstLine = "first";
     private const string ExpectedSecondLine = "second";
     private const int SmallOutputLimitCharacters = 64;
@@ -52,6 +52,8 @@ public class CodexExecTests
     private const int DuplexMaximumProcessOutputCharacters = 1048576;
     private const char PromptCharacter = 'p';
     private static readonly TimeSpan ProcessOutputCleanupAssertionBound = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan ClosedInputObservationTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan ClosedInputCleanupAssertionBound = TimeSpan.FromSeconds(3);
     private const string TestInput = "test";
     private const string CancellationScriptFileName = "codex-cancel.sh";
     private const string PosixShellPath = "/bin/sh";
@@ -837,24 +839,37 @@ public class CodexExecTests
     public async Task DefaultProcessRunner_StillRunningAfterClosingInputIsBoundedAndUnconfirmed()
     {
         var prompt = new string(PromptCharacter, DuplexPromptCharacters);
+        var stdinWriteFailure = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var invocation = CreateOutputInvocation(
             OperatingSystem.IsWindows() ? WindowsStaysRunningAfterClosingInputCommand : PosixStaysRunningAfterClosingInputCommand,
             TimeSpan.FromMilliseconds(250), DuplexMaximumProcessOutputCharacters) with
-        { Input = prompt };
-        var stopwatch = Stopwatch.StartNew();
-        var action = async () =>
         {
-            await foreach (var _ in new DefaultCodexProcessRunner().RunAsync(invocation, NullLogger.Instance, CancellationToken.None))
-            {
-            }
+            Input = prompt,
+            StandardInputWriteFailed = processExited => stdinWriteFailure.TrySetResult(processExited),
         };
+        using var cancellation = new CancellationTokenSource();
+        var execution = DrainToListAsync(new DefaultCodexProcessRunner()
+            .RunAsync(invocation, NullLogger.Instance, cancellation.Token));
 
-        var exception = await Assert.That(action).ThrowsException();
-        stopwatch.Stop();
+        try
+        {
+            await stdinWriteFailure.Task.WaitAsync(ClosedInputObservationTimeout);
+            await Assert.That(await stdinWriteFailure.Task).IsFalse();
+            var stopwatch = Stopwatch.StartNew();
+            var completedTask = await Task.WhenAny(execution, Task.Delay(ClosedInputCleanupAssertionBound));
+            stopwatch.Stop();
 
-        await Assert.That(exception).IsTypeOf<TimeoutException>();
-        await Assert.That(exception).IsNotTypeOf<CliExecutionFailureException>();
-        await Assert.That(stopwatch.Elapsed < TimeSpan.FromSeconds(3)).IsTrue();
+            await Assert.That(ReferenceEquals(completedTask, execution)).IsTrue();
+            var exception = await Assert.That(async () => await execution).ThrowsException();
+            await Assert.That(exception).IsTypeOf<TimeoutException>();
+            await Assert.That(exception).IsNotTypeOf<CliExecutionFailureException>();
+            await Assert.That(stopwatch.Elapsed < ClosedInputCleanupAssertionBound).IsTrue();
+        }
+        finally
+        {
+            cancellation.Cancel();
+            await CaptureExceptionAsync(execution).WaitAsync(ProcessOutputCleanupAssertionBound);
+        }
     }
 
     [Test]
@@ -936,6 +951,19 @@ public class CodexExecTests
         }
 
         return result;
+    }
+
+    private static async Task<Exception?> CaptureExceptionAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     private static string CreateSandboxDirectory()
