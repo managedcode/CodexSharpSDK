@@ -73,6 +73,8 @@ If no new rule is detected -> do not update the file.
 
 ### Task Delivery (ALL TASKS)
 
+- An installed CLI must not be rejected solely because its version differs from the SDK target. The target selects SDK-managed installation and release qualification; actual CLI capabilities determine which operations work (creator correction 2026-10-16).
+
 - Always start from `docs/Architecture/Overview.md`:
   - identify impacted modules and boundaries
   - identify entry points and contracts

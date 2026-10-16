@@ -22,12 +22,9 @@ public class CodexModelsTests
         var missingBundledSlugs = bundledModelSlugs
             .Except(sdkModelSlugs, StringComparer.Ordinal)
             .ToArray();
-        var extraSdkSlugs = sdkModelSlugs
-            .Except(bundledModelSlugs, StringComparer.Ordinal)
-            .ToArray();
 
         await Assert.That(missingBundledSlugs).IsEmpty();
-        await Assert.That(extraSdkSlugs).IsEmpty();
+        // Other constants remain valid choices for other installed CLI versions.
     }
 
     private static string[] GetSdkModelSlugs()

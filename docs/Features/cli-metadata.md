@@ -9,7 +9,9 @@ Source of truth: local `codex` CLI + upstream npm package metadata (`@openai/cod
 
 ## Purpose
 
-The SDK package version mirrors the targeted Codex CLI version in its first three numeric components and uses the fourth component for an SDK hotfix. `CodexCliCompatibility.TargetVersion` exposes the exact compatible CLI target without starting a process. `GetCliUpdateStatus()` separately reports the latest version discovered from npm.
+The SDK package version mirrors the targeted Codex CLI version in its first three numeric components and uses the fourth component for an SDK hotfix. `CodexCliCompatibility.TargetVersion` exposes the managed-installation and release-verification target without starting a process. `GetCliUpdateStatus()` separately reports the latest version discovered from npm.
+
+Installed CLI versions are not required to match `TargetVersion`. Metadata reports the actual installed version, and execution uses that CLI; unavailable flags or features fail through the actual CLI operation rather than a version-number admission gate.
 
 Expose runtime Codex CLI metadata to SDK consumers:
 
@@ -39,6 +41,8 @@ Expose runtime Codex CLI metadata to SDK consumers:
 - Replacing Codex CLI model selection logic.
 
 ---
+
+The model constants include the official `rust-v0.163.0` bundled catalog (GPT-6, GPT-5.6, Daybreak, GPT-5.5 and the review model). Constants for other installed CLI catalogs remain usable because installed versions are unrestricted. The catalog regression requires every bundled upstream model to be represented; it does not reject additional verified model constants. Runtime metadata still reads the installed CLI cache and does not infer account access from these constants.
 
 ## Business Rules
 
