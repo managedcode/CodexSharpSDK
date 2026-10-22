@@ -43,6 +43,7 @@ internal static class CodexProtocolConstants
         internal const string ItemCompleted = "item.completed";
         internal const string ItemStarted = "item.started";
         internal const string ItemUpdated = "item.updated";
+        internal const string AgentMessageDelta = "item/agentMessage/delta";
         internal const string ThreadStarted = "thread.started";
         internal const string TurnCompleted = "turn.completed";
         internal const string TurnFailed = "turn.failed";
@@ -73,6 +74,7 @@ internal static class CodexProtocolConstants
     {
         internal const string Completed = "completed";
         internal const string Failed = "failed";
+        internal const string Declined = "declined";
         internal const string InProgress = "in_progress";
     }
 

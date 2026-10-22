@@ -131,6 +131,28 @@ public sealed class CodexExec : IDisposable
         return RunWithDiagnosticsAsync(invocation, args.CancellationToken);
     }
 
+    internal IAsyncEnumerable<string> RunAppServerAsync(CodexExecArgs args, IAsyncEnumerable<string> inputLines)
+    {
+        var commandArgs = new List<string> { "app-server" };
+        if (_configOverrides is not null)
+        {
+            foreach (var value in TomlConfigSerializer.Serialize(_configOverrides))
+            {
+                commandArgs.Add(ConfigFlag);
+                commandArgs.Add(value);
+            }
+        }
+        var invocation = new CodexProcessInvocation(_executablePath, commandArgs,
+            BuildEnvironment(args.BaseUrl, args.ApiKey), string.Empty)
+        {
+            ProcessTerminationTimeout = _processTerminationTimeout,
+            MaximumProcessOutputCharacters = _maximumProcessOutputCharacters,
+            PrefixArguments = _launchCommand.PrefixArguments,
+            InputLines = inputLines,
+        };
+        return RunWithDiagnosticsAsync(invocation, args.CancellationToken);
+    }
+
     internal void CancelActiveRuns() => _lifetimeCancellation.Cancel();
 
     public void Dispose()
@@ -481,6 +503,7 @@ internal sealed record CodexProcessInvocation(
     public IReadOnlyList<string> PrefixArguments { get; init; } = Array.Empty<string>();
     public TimeSpan ProcessTerminationTimeout { get; init; } = CodexOptions.DefaultProcessTerminationTimeout;
     public int MaximumProcessOutputCharacters { get; init; } = CodexOptions.DefaultMaximumProcessOutputCharacters;
+    public IAsyncEnumerable<string>? InputLines { get; init; }
     public Action? StandardErrorReaderCompleted { get; init; }
     public Action? StandardOutputReadCompleted { get; init; }
     public Action? StandardErrorOutputLimitExceeded { get; init; }
@@ -578,7 +601,7 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
                     standardInputWriteFailureObserved = true;
                     invocation.StandardInputWriteFailed?.Invoke(process.HasExited);
                 },
-                outputCancellation.Token);
+                outputCancellation.Token, invocation.InputLines);
             while (true)
             {
                 var readLineTask = standardOutputReadTask!;
@@ -680,6 +703,7 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
         }
         finally
         {
+            outputCancellation.Cancel();
             Exception? processExitFailure = null;
             try
             {
@@ -987,11 +1011,23 @@ internal sealed class DefaultCodexProcessRunner : ICodexProcessRunner
         StreamWriter standardInput,
         string input,
         Action? onWriteFailure,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IAsyncEnumerable<string>? inputLines = null)
     {
         try
         {
-            await standardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false);
+            if (inputLines is not null)
+            {
+                await foreach (var line in inputLines.WithCancellation(cancellationToken).ConfigureAwait(false))
+                {
+                    await standardInput.WriteLineAsync(line.AsMemory(), cancellationToken).ConfigureAwait(false);
+                    await standardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                await standardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false);
+            }
             await standardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
             await standardInput.DisposeAsync().ConfigureAwait(false);
         }

@@ -32,7 +32,7 @@
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <EnablePackageValidation>true</EnablePackageValidation>
-    <Version>0.163.0.1</Version>
+    <Version>0.163.0.2</Version>
     <PackageVersion>$(Version)</PackageVersion>
   </PropertyGroup>
 

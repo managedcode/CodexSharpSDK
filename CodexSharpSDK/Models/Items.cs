@@ -8,6 +8,7 @@ public enum CommandExecutionStatus
     InProgress,
     Completed,
     Failed,
+    Declined,
 }
 
 public enum PatchChangeKind
@@ -22,6 +23,7 @@ public enum PatchApplyStatus
     InProgress,
     Completed,
     Failed,
+    Declined,
 }
 
 public enum McpToolCallStatus

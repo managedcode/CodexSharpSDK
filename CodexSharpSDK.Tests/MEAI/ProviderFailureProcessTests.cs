@@ -13,9 +13,10 @@ public sealed class ProviderFailureProcessTests
     private const string VersionFlag = "--version";
     private const string CliVersion = "0.160.1";
     private const string MarkerEnvironmentName = "CODEX_FAILURE_MARKER";
-    private const string ProviderFailureLine = "{\"type\":\"turn.failed\",\"error\":{\"message\":\"provider failed\"}}";
+    private const string ProviderFailureLine = "{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"fixture\",\"turn\":{\"id\":\"turn\",\"status\":\"failed\",\"error\":{\"message\":\"provider failed\"}}}}";
     private const string StreamErrorLine = "{\"type\":\"error\",\"message\":\"stream failed\"}";
     private const string LateEventLine = "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":0,\"cached_input_tokens\":0,\"output_tokens\":0}}";
+    private const string AppServerHandshake = "const readline=require('node:readline').createInterface({input:process.stdin});readline.on('line',line=>{const request=JSON.parse(line);if(request.method==='initialize')console.log(JSON.stringify({id:request.id,result:{}}));if(request.method==='thread/start')console.log(JSON.stringify({id:request.id,result:{thread:{id:'fixture'}}}));if(request.method==='turn/start')startTurn();});\n";
     private const string UserPrompt = "bounded SDK fixture request";
     private const string CleanupSkipReason = "The detached inherited-pipe fixture requires POSIX process semantics.";
 
@@ -120,19 +121,21 @@ public sealed class ProviderFailureProcessTests
     private static string CreateDelayedExitScript() => string.Concat(
         "const fs=require('node:fs');\n",
         "if(process.argv.includes('", VersionFlag, "')){console.log('codex-cli ", CliVersion, "');process.exit(0);}\n",
-        "process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write('", ProviderFailureLine,
+        AppServerHandshake,
+        "function startTurn(){process.stdout.write('", ProviderFailureLine,
         "\\n');setTimeout(()=>{process.stdout.write('", LateEventLine,
-        "\\n',()=>{fs.writeFileSync(process.env.", MarkerEnvironmentName, ",'natural-eof');process.exit(0);});},150);});\n");
+        "\\n',()=>{fs.writeFileSync(process.env.", MarkerEnvironmentName, ",'natural-eof');process.exit(0);});},150);}\n");
 
     private static string CreateRetainedPipeScript(string pidPath) => string.Concat(
         "const fs=require('node:fs');const {spawn}=require('node:child_process');\n",
         "if(process.argv.includes('", VersionFlag, "')){console.log('codex-cli ", CliVersion, "');process.exit(0);}\n",
-        "process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write('", StreamErrorLine,
+        AppServerHandshake,
+        "function startTurn(){process.stdout.write('", StreamErrorLine,
         "\\n',()=>setTimeout(()=>{const helperSource=\"const fs=require('node:fs');const{spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setTimeout(()=>{},30000)'],{stdio:['ignore','inherit','inherit'],detached:true});child.unref();fs.writeFileSync('",
         pidPath.Replace("'", "\\'", StringComparison.Ordinal),
         "',String(child.pid));\";const helper=spawn(process.execPath,['-e',helperSource],{stdio:['ignore','inherit','inherit'],detached:true});helper.unref();helper.on('exit',()=>fs.writeFileSync(process.env.",
         MarkerEnvironmentName,
-        ",'ready'));setInterval(()=>{},1000);},100));});\n");
+        ",'ready'));setInterval(()=>{},1000);},100));}\n");
 
     private static string CreateSandboxDirectory()
     {

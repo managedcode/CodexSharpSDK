@@ -135,7 +135,7 @@ public class StreamingEventMapperTests
     }
 
     [Test]
-    public async Task ToUpdates_AgentMessageUpdateAndCompletion_EmitsOneAuthoritativeSnapshotPerIdentity()
+    public async Task ToUpdates_AgentMessageUpdates_StreamSuffixesWithoutRepeatingCompletion()
     {
         var events = ToAsyncEnumerable(
             new ItemUpdatedEvent(new AgentMessageItem("message-1", "Hello")),
@@ -145,8 +145,9 @@ public class StreamingEventMapperTests
 
         var updates = await CollectUpdates(events);
 
-        await Assert.That(updates.Count).IsEqualTo(1);
-        await Assert.That(updates[0].Text).IsEqualTo("Hello world");
+        await Assert.That(updates.Count).IsEqualTo(2);
+        await Assert.That(updates[0].Text).IsEqualTo("Hello");
+        await Assert.That(updates[1].Text).IsEqualTo(" world");
         await Assert.That(updates[0].Role).IsEqualTo(ChatRole.Assistant);
     }
 

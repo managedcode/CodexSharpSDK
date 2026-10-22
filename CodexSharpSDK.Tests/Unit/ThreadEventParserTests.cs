@@ -84,6 +84,18 @@ public class ThreadEventParserTests
     }
 
     [Test]
+    public async Task Parse_DeclinedNativeMutations_PreserveTerminalStatus()
+    {
+        var command = (ItemCompletedEvent)ThreadEventParser.Parse(
+            """{"type":"item.completed","item":{"id":"c","type":"command_execution","command":"touch file","aggregated_output":"","exit_code":null,"status":"declined"}}""");
+        var patch = (ItemCompletedEvent)ThreadEventParser.Parse(
+            """{"type":"item.completed","item":{"id":"p","type":"file_change","changes":[{"path":"file","kind":"add"}],"status":"declined"}}""");
+
+        await Assert.That(((CommandExecutionItem)command.Item).Status).IsEqualTo(CommandExecutionStatus.Declined);
+        await Assert.That(((FileChangeItem)patch.Item).Status).IsEqualTo(PatchApplyStatus.Declined);
+    }
+
+    [Test]
     public async Task Parse_ParsesCollabToolCallDetails()
     {
         var parsed = ThreadEventParser.Parse(

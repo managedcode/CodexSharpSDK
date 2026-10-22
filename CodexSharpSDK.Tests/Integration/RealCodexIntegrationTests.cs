@@ -51,6 +51,44 @@ public class RealCodexIntegrationTests
     }
 
     [Test]
+    public async Task GetStreamingResponseAsync_NativeFileToolsCommitVisibleWorkspaceEffect()
+    {
+        using var settings = RealCodexTestSupport.GetRequiredSettings();
+        var workspace = Path.Combine(settings.SandboxDirectory, "workspace");
+        Directory.CreateDirectory(workspace);
+        using var client = new CodexChatClient(new CodexChatClientOptions
+        {
+            CodexOptions = new CodexOptions { EnvironmentVariables = settings.EnvironmentOverrides },
+            DefaultModel = settings.Model,
+            DefaultThreadOptions = new ThreadOptions
+            {
+                Model = settings.Model,
+                WorkingDirectory = workspace,
+                SandboxMode = SandboxMode.WorkspaceWrite,
+                ApprovalPolicy = ApprovalMode.Never,
+                NetworkAccessEnabled = false,
+                WebSearchMode = WebSearchMode.Disabled,
+            },
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var terminal = false;
+        var activity = false;
+        var text = new StringBuilder();
+        await foreach (var update in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User,
+            "Use your file editing tool to create native-tool-result.txt containing SDK_TOOL_OK followed by exactly one newline. Read the file back with a tool, then confirm SDK_TOOL_OK. Do not change any other files.")], cancellationToken: timeout.Token))
+        {
+            text.Append(update.Text);
+            activity |= update.AdditionalProperties?.ContainsKey("managedcode:activity") is true;
+            terminal |= update.FinishReason == ChatFinishReason.Stop;
+        }
+        await Assert.That(terminal).IsTrue();
+        await Assert.That(activity).IsTrue();
+        await Assert.That(text.ToString()).Contains("SDK_TOOL_OK");
+        await Assert.That(await File.ReadAllTextAsync(Path.Combine(workspace, "native-tool-result.txt"), timeout.Token))
+            .IsEqualTo("SDK_TOOL_OK\n");
+    }
+
+    [Test]
     public async Task RunAsync_WithRealCodexCli_ReturnsStructuredOutput()
     {
         using var settings = RealCodexTestSupport.GetRequiredSettings();
@@ -87,15 +125,18 @@ public class RealCodexIntegrationTests
         var hasTurnCompleted = false;
         var hasTurnFailed = false;
         var hasCompletedItem = false;
+        var hasTextDelta = false;
 
         await foreach (var threadEvent in streamed.Events.WithCancellation(cancellation.Token))
         {
             hasTurnCompleted |= threadEvent is TurnCompletedEvent;
             hasTurnFailed |= threadEvent is TurnFailedEvent;
             hasCompletedItem |= threadEvent is ItemCompletedEvent;
+            hasTextDelta |= threadEvent is AgentMessageDeltaEvent;
         }
 
         await Assert.That(hasCompletedItem).IsTrue();
+        await Assert.That(hasTextDelta).IsTrue();
         await Assert.That(hasTurnCompleted).IsTrue();
         await Assert.That(hasTurnFailed).IsFalse();
         await Assert.That(thread.Id).IsNotNull();

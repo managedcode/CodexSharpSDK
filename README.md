@@ -482,3 +482,5 @@ See [docs/Features/agent-framework-integration.md](https://github.com/managedcod
 dotnet build ManagedCode.CodexSharpSDK.slnx -c Release -warnaserror
 dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release
 ```
+
+Live `RunStreamedAsync` and MEAI streaming use native app-server text deltas; complete runs retain `exec --json`. See [the streaming decision](docs/ADR/005-native-live-text-streaming.md).

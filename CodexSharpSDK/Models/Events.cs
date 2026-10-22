@@ -30,6 +30,9 @@ public sealed record ItemUpdatedEvent(ThreadItem Item)
 public sealed record ItemCompletedEvent(ThreadItem Item)
     : ThreadEvent(CodexProtocolConstants.EventTypes.ItemCompleted);
 
+public sealed record AgentMessageDeltaEvent(string ItemId, string Delta)
+    : ThreadEvent(CodexProtocolConstants.EventTypes.AgentMessageDelta);
+
 public sealed record ThreadErrorEvent(string Message)
     : ThreadEvent(CodexProtocolConstants.EventTypes.Error);
 

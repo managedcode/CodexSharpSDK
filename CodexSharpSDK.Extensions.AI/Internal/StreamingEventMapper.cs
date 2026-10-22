@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text;
 using ManagedCode.CodexSharpSDK.Extensions.AI.Content;
 using ManagedCode.CodexSharpSDK.Models;
 using Microsoft.Extensions.AI;
@@ -23,6 +24,7 @@ internal static class StreamingEventMapper
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var completedMessageIds = new HashSet<string>(StringComparer.Ordinal);
+        var messageTexts = new Dictionary<string, StringBuilder>(StringComparer.Ordinal);
         string? conversationId = null;
         string? failureMessage = null;
         await foreach (var evt in events.WithCancellation(cancellationToken).ConfigureAwait(false))
@@ -40,13 +42,27 @@ internal static class StreamingEventMapper
                     yield return new ChatResponseUpdate { ConversationId = conversationId };
                     break;
 
-                case ItemCompletedEvent { Item: AgentMessageItem msg } when completedMessageIds.Add(msg.Id):
-                    yield return new ChatResponseUpdate
+                case AgentMessageDeltaEvent delta:
+                    if (completedMessageIds.Contains(delta.ItemId))
                     {
-                        ConversationId = conversationId,
-                        Role = ChatRole.Assistant,
-                        Contents = [new TextContent(msg.Text)],
-                    };
+                        throw new InvalidDataException("Codex emitted text after completing its assistant message.");
+                    }
+                    if (!messageTexts.TryGetValue(delta.ItemId, out var text))
+                    {
+                        text = new StringBuilder();
+                        messageTexts.Add(delta.ItemId, text);
+                    }
+                    text.Append(delta.Delta);
+                    yield return AssistantText(delta.ItemId, delta.Delta, conversationId);
+                    break;
+
+                case ItemCompletedEvent { Item: AgentMessageItem msg } when completedMessageIds.Add(msg.Id):
+                    var remainder = SnapshotSuffix(messageTexts, msg);
+                    if (remainder.Length > 0)
+                    {
+                        yield return AssistantText(msg.Id, remainder, conversationId);
+                    }
+                    messageTexts.Remove(msg.Id);
                     break;
 
                 case ItemCompletedEvent { Item: ReasoningItem r }:
@@ -103,10 +119,12 @@ internal static class StreamingEventMapper
                         });
                     break;
 
-                case ItemUpdatedEvent { Item: AgentMessageItem }:
-                    // Codex exec JSONL carries full item snapshots here; its separate app-server
-                    // agentMessage/delta event is not part of this SDK's ThreadEvent contract.
-                    // Wait for item/completed, the authoritative final snapshot, to avoid duplicates.
+                case ItemUpdatedEvent { Item: AgentMessageItem snapshot } when !completedMessageIds.Contains(snapshot.Id):
+                    var suffix = SnapshotSuffix(messageTexts, snapshot);
+                    if (suffix.Length > 0)
+                    {
+                        yield return AssistantText(snapshot.Id, suffix, conversationId);
+                    }
                     break;
 
                 case ItemStartedEvent { Item: CommandExecutionItem }:
@@ -165,6 +183,29 @@ internal static class StreamingEventMapper
         {
             throw CliExecutionFailureException.FromProviderFailure(failureMessage);
         }
+    }
+
+    private static ChatResponseUpdate AssistantText(string id, string text, string? conversationId) => new(ChatRole.Assistant, [new TextContent(text)])
+    {
+        MessageId = id,
+        ConversationId = conversationId,
+    };
+
+    private static string SnapshotSuffix(Dictionary<string, StringBuilder> messages, AgentMessageItem snapshot)
+    {
+        if (!messages.TryGetValue(snapshot.Id, out var text))
+        {
+            messages.Add(snapshot.Id, new StringBuilder(snapshot.Text));
+            return snapshot.Text;
+        }
+        var emitted = text.ToString();
+        if (!snapshot.Text.StartsWith(emitted, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("Codex completed text differs from its streamed assistant message.");
+        }
+        var suffix = snapshot.Text[emitted.Length..];
+        text.Append(suffix);
+        return suffix;
     }
 
     private static ChatResponseUpdate CreateNativeActivityUpdate(string category, string phase, string? conversationId, AIContent? content = null) => new()

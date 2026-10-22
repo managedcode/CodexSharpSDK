@@ -53,7 +53,7 @@ public sealed class CodexThread
         ArgumentNullException.ThrowIfNull(input);
         var normalizedInput = new NormalizedInput(input, []);
         var resolvedTurnOptions = turnOptions ?? new TurnOptions();
-        return Task.FromResult(new RunStreamedResult(RunStreamedWithTurnGateAsync(normalizedInput, resolvedTurnOptions)));
+        return Task.FromResult(new RunStreamedResult(RunStreamedWithTurnGateAsync(normalizedInput, resolvedTurnOptions, live: true)));
     }
 
     public Task<RunStreamedResult> RunStreamedAsync(IReadOnlyList<UserInput> input, TurnOptions? turnOptions = null)
@@ -61,7 +61,7 @@ public sealed class CodexThread
         ThrowIfDisposed();
         var normalizedInput = NormalizeInput(input);
         var resolvedTurnOptions = turnOptions ?? new TurnOptions();
-        return Task.FromResult(new RunStreamedResult(RunStreamedWithTurnGateAsync(normalizedInput, resolvedTurnOptions)));
+        return Task.FromResult(new RunStreamedResult(RunStreamedWithTurnGateAsync(normalizedInput, resolvedTurnOptions, live: true)));
     }
 
     public Task<RunResult> RunAsync(string input, TurnOptions? turnOptions = null)
@@ -238,6 +238,7 @@ public sealed class CodexThread
     private async IAsyncEnumerable<ThreadEvent> RunStreamedWithTurnGateAsync(
         NormalizedInput normalizedInput,
         TurnOptions turnOptions,
+        bool live = false,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -251,7 +252,10 @@ public sealed class CodexThread
         await _turnGate.WaitAsync(linkedCancellationToken).ConfigureAwait(false);
         try
         {
-            await foreach (var threadEvent in RunStreamedInternalAsync(normalizedInput, turnOptions, linkedCancellationToken)
+            var events = live
+                ? RunLiveStreamedInternalAsync(normalizedInput, turnOptions, linkedCancellationToken)
+                : RunStreamedInternalAsync(normalizedInput, turnOptions, linkedCancellationToken);
+            await foreach (var threadEvent in events
                                .WithCancellation(linkedCancellationToken)
                                .ConfigureAwait(false))
             {
@@ -261,6 +265,29 @@ public sealed class CodexThread
         finally
         {
             _turnGate.Release();
+        }
+    }
+
+    private async IAsyncEnumerable<ThreadEvent> RunLiveStreamedInternalAsync(
+        NormalizedInput input, TurnOptions options, [EnumeratorCancellation] CancellationToken token)
+    {
+        await using var images = await ResolvedImages.CreateAsync(input.Images, _options.Logger, token).ConfigureAwait(false);
+        var args = new CodexExecArgs
+        {
+            Input = input.Prompt,
+            Images = images.Paths,
+            ThreadId = _id,
+            BaseUrl = _options.BaseUrl,
+            ApiKey = _options.ApiKey,
+            CancellationToken = token,
+        };
+        await foreach (var item in AppServerConversation.RunAsync(_exec, args, _threadOptions, options, token).ConfigureAwait(false))
+        {
+            if (item is ThreadStartedEvent started)
+            {
+                Volatile.Write(ref _id, started.ThreadId);
+            }
+            yield return item;
         }
     }
 

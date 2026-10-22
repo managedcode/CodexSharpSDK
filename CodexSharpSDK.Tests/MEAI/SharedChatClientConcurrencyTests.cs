@@ -19,19 +19,26 @@ public sealed class SharedChatClientConcurrencyTests
         const markerDirectory = process.env.CODEX_SHARED_CLIENT_MARKERS;
         const markerPath = path.join(markerDirectory, `${process.pid}.active`);
         fs.writeFileSync(markerPath, 'active');
-        const input = fs.readFileSync(0, 'utf8');
-        const startedAt = Date.now();
-        const waitCell = new Int32Array(new SharedArrayBuffer(4));
-        while (Date.now() - startedAt < 5000) {
-            if (fs.readdirSync(markerDirectory).filter(name => name.endsWith('.active')).length >= 2) break;
-            Atomics.wait(waitCell, 0, 0, 20);
-        }
-        const activeCount = fs.readdirSync(markerDirectory).filter(name => name.endsWith('.active')).length;
-        if (activeCount < 2) process.exit(31);
         const threadId = String(process.pid);
-        console.log(JSON.stringify({type:'thread.started',thread_id:threadId}));
-        console.log(JSON.stringify({type:'item.completed',item:{id:threadId,type:'agent_message',text:input}}));
-        console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,cached_input_tokens:0,output_tokens:1}}));
+        const send = value => console.log(JSON.stringify(value));
+        require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+            const request = JSON.parse(line);
+            if (request.method === 'initialize') send({id:request.id,result:{}});
+            if (request.method === 'thread/start') send({id:request.id,result:{thread:{id:threadId}}});
+            if (request.method !== 'turn/start') return;
+            const startedAt = Date.now();
+            const waitCell = new Int32Array(new SharedArrayBuffer(4));
+            while (Date.now() - startedAt < 5000) {
+                if (fs.readdirSync(markerDirectory).filter(name => name.endsWith('.active')).length >= 2) break;
+                Atomics.wait(waitCell, 0, 0, 20);
+            }
+            if (fs.readdirSync(markerDirectory).filter(name => name.endsWith('.active')).length < 2) process.exit(31);
+            const text = request.params.input[0].text;
+            send({id:request.id,result:{turn:{id:'turn'}}});
+            send({method:'item/agentMessage/delta',params:{threadId,itemId:threadId,delta:text}});
+            send({method:'item/completed',params:{threadId,item:{id:threadId,type:'agentMessage',text}}});
+            send({method:'turn/completed',params:{threadId,turn:{id:'turn',status:'completed'}}});
+        });
         """;
 
     [Test]

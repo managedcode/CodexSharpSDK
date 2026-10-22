@@ -6,7 +6,7 @@ Single source of truth: this file is navigational and coarse. Detailed behavior 
 
 ## Summary
 
-- **System:** .NET SDK wrapper over Codex CLI JSONL protocol.
+- **System:** .NET SDK over the official Codex CLI: `exec --json` for complete runs, JSON-RPC `app-server` for live text streaming. Both use the same bounded process owner.
 - **Where is the code:** core SDK in `CodexSharpSDK`; optional M.E.AI adapter in `CodexSharpSDK.Extensions.AI`; optional Microsoft Agent Framework adapter in `CodexSharpSDK.Extensions.AgentFramework`; tests in `CodexSharpSDK.Tests`.
 - **Entry points:** `CodexClient`, `CodexChatClient` (`IChatClient` adapter), `AddCodexAIAgent` / `AddKeyedCodexAIAgent` (`AIAgent` DI helpers).
 - **Dependencies:** local `codex` CLI process, `System.Text.Json`, .NET SDK/toolchain, GitHub Actions.
@@ -53,7 +53,7 @@ flowchart LR
 flowchart LR
   THREAD["CodexThread.RunAsync / RunAsync<T> / RunStreamedAsync"]
   EXECARGS["CodexExecArgs"]
-  CLI["Codex CLI\n`exec --json`"]
+  CLI["Codex CLI\n`exec --json` or live `app-server`"]
   JSONL["JSONL stream events"]
   PARSE["ThreadEventParser.Parse"]
   EVENTS["ThreadEvent / ThreadItem models"]

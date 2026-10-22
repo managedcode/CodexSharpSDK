@@ -262,6 +262,7 @@ internal static class ThreadEventParser
             CodexProtocolConstants.Statuses.InProgress => PatchApplyStatus.InProgress,
             CodexProtocolConstants.Statuses.Completed => PatchApplyStatus.Completed,
             CodexProtocolConstants.Statuses.Failed => PatchApplyStatus.Failed,
+            CodexProtocolConstants.Statuses.Declined => PatchApplyStatus.Declined,
             _ => throw new InvalidOperationException($"Unsupported patch apply status: {status}"),
         };
     }
@@ -321,6 +322,7 @@ internal static class ThreadEventParser
             CodexProtocolConstants.Statuses.InProgress => CommandExecutionStatus.InProgress,
             CodexProtocolConstants.Statuses.Completed => CommandExecutionStatus.Completed,
             CodexProtocolConstants.Statuses.Failed => CommandExecutionStatus.Failed,
+            CodexProtocolConstants.Statuses.Declined => CommandExecutionStatus.Declined,
             _ => throw new InvalidOperationException($"Unsupported command execution status: {status}"),
         };
     }
