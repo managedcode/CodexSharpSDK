@@ -61,7 +61,7 @@ internal static class AppServerOptions
         var inputs = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = args.Input });
         foreach (var path in args.Images ?? [])
         {
-            inputs.Add(new JsonObject { ["type"] = "localImage", ["path"] = path });
+            inputs.Add((JsonNode)new JsonObject { ["type"] = "localImage", ["path"] = path });
         }
         var result = new JsonObject { ["threadId"] = threadId, ["input"] = inputs };
         if (options.ModelReasoningEffort is { } effort)
