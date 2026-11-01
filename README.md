@@ -28,7 +28,7 @@ dotnet add package ManagedCode.CodexSharpSDK
 
 Before using this SDK, you must have:
 - `codex` CLI installed and available in `PATH`
-- an already authenticated Codex session (`codex login`)
+- a Codex CLI session authenticated through the CLI or `BeginLoginAsync` (`codex login`)
 
 Quick check:
 
@@ -484,3 +484,21 @@ dotnet test --solution ManagedCode.CodexSharpSDK.slnx -c Release
 ```
 
 Live `RunStreamedAsync` and MEAI streaming use native app-server text deltas; complete runs retain `exec --json`. See [the streaming decision](docs/ADR/005-native-live-text-streaming.md).
+
+## Sign in from your application
+
+The SDK can start native CLI sign-in and return the browser URL for your user. Keep the returned session alive until sign-in finishes.
+
+```csharp
+await using var login = await client.BeginLoginAsync(cancellationToken);
+var instructions = login.Instructions;
+if (instructions is not null)
+{
+    Console.WriteLine(instructions.LoginUrl);
+    Console.WriteLine(instructions.UserCode);
+}
+
+await login.WaitForCompletionAsync(cancellationToken);
+```
+
+`CancelAsync` or disposal terminates unfinished sign-in. Cancelling a completion wait leaves native sign-in running. Credentials stay in the selected CLI profile; select a separate profile for each server user and reuse it for agent execution. See [native sign-in](docs/Features/cli-login.md) for retry, cancellation and profile details.

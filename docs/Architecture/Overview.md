@@ -87,6 +87,8 @@ flowchart LR
 
 ### 2.1 Modules
 
+- `Native sign-in` — code: [CliLoginSession](../../CodexSharpSDK/Client/CliLoginSession.cs); behavior: [cli-login.md](../Features/cli-login.md); decision: [ADR 006](../ADR/006-native-cli-sign-in.md).
+
 - `Public API` — code: [CodexClient.cs](../../CodexSharpSDK/Client/CodexClient.cs), [CodexThread.cs](../../CodexSharpSDK/Client/CodexThread.cs); docs: [thread-run-flow.md](../Features/thread-run-flow.md)
 - `Execution Layer` — code: [CodexExec.cs](../../CodexSharpSDK/Execution/CodexExec.cs), [CodexExecArgs.cs](../../CodexSharpSDK/Execution/CodexExecArgs.cs)
 - `Protocol Parsing` — code: [ThreadEventParser.cs](../../CodexSharpSDK/Internal/ThreadEventParser.cs), [CodexProtocolConstants.cs](../../CodexSharpSDK/Internal/CodexProtocolConstants.cs), [Events.cs](../../CodexSharpSDK/Models/Events.cs), [Items.cs](../../CodexSharpSDK/Models/Items.cs)
