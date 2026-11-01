@@ -182,7 +182,6 @@ jobs:
 
     - name: Publish to NuGet
       id: publish
-      continue-on-error: true
       run: |
         set +e
         OUTPUT=""
