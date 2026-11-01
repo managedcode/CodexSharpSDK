@@ -149,6 +149,7 @@ If no new rule is detected -> do not update the file.
 
 ### Code Style
 
+- Package versions must use `<upstream-major>.<upstream-minor>.<upstream-patch>.<wrapper-revision>`: the first three parts match the supported upstream CLI/SDK release, and the fourth tracks our wrapper changes for that release. Keep core and adapter packages on the same version; never invent an independent package version sequence, so consumers can identify the upstream baseline directly.
 - Follow `.editorconfig` and analyzer rules.
 - Always build with `-warnaserror` so warnings fail the build.
 - Prefer idiomatic, readable C# with clear naming and straightforward control flow so code can be understood quickly during review and maintenance.
